@@ -2345,7 +2345,6 @@ $@"<TestClass7
 
 		}
 		
-		
 		[Test]
 		public void CollectionShouldNotBeAssigned()
 		{

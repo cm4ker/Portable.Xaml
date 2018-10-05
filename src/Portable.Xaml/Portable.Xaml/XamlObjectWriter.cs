@@ -111,7 +111,8 @@ namespace Portable.Xaml
 			}
 		}
 
-		int line, column;
+		//int line, column;
+		bool lineinfo_was_given;
 
 		internal XamlObjectWriterSettings Settings
 		{
@@ -135,13 +136,14 @@ namespace Portable.Xaml
 
 		public bool ShouldProvideLineInfo
 		{
-			get { return true; }
+			get { return lineinfo_was_given; }
 		}
 
 		public void SetLineInfo(int lineNumber, int linePosition)
 		{
-			line = lineNumber;
-			column = linePosition;
+			//			line = lineNumber;
+			//			column = linePosition;
+			lineinfo_was_given = true;
 		}
 
 		public void Clear()
@@ -251,13 +253,6 @@ namespace Portable.Xaml
 				deferredWriter.DeferCount++;
 				return;
 			}
-
-			if (property.IsUnknown)
-				throw new XamlObjectWriterException($"Cannot set unknown member '{property}'")
-				{
-					LineNumber = line,
-					LinePosition = column
-				};
 
 			intl.WriteStartMember(property);
 
@@ -373,7 +368,7 @@ namespace Portable.Xaml
 			
 			//if the type is immutable then we need set value
 			if(!state.Type.IsImmutable)
-				object_states.Peek().IsValueProvidedByInstance = true;
+				object_states.Peek().IsValueProvidedByParent = true;
 			state.Value = instance;
 			state.IsInstantiated = true;
 			object_states.Push(state);
@@ -561,8 +556,8 @@ namespace Portable.Xaml
 			{
 				var state = object_states.Peek();
 				// won't be instantiated yet if dealing with a type that has no default constructor
-				if (state.IsInstantiated && !(state.IsValueProvidedByInstance 
-												&& state.CurrentMember.Type.IsCollection))
+				if (state.IsInstantiated && !state.IsAlreadyAttachedToParent 
+				                         && !(state.IsValueProvidedByParent && state.CurrentMember.Type.IsCollection))
 					SetValue(member, state.Value, value);
 			}
 		}
@@ -572,7 +567,7 @@ namespace Portable.Xaml
 			try
 			{
 				if (!source.OnSetValue(target, member, value))
-						member.Invoker.SetValue(target, value);
+					member.Invoker.SetValue(target, value);
 			}
 			catch (Exception ex)
 			{
