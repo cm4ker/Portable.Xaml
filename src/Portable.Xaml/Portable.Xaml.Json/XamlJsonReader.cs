@@ -157,7 +157,7 @@ namespace Portable.Xaml.Json
 			if (ns == null)
 				throw CreateException($"Prefix '{prefix}' is unknown in this context");
 
-			xamlType = _context.GetXamlType(ns, name);
+			xamlType = _context.GetXamlType(name);
 			if (xamlType == null || xamlType.IsUnknown)
 				throw CreateException($"Type '{{{ns}}}{typeName}' is unknown");
 			return xamlType;
