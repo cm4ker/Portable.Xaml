@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -23,6 +23,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -49,7 +50,7 @@ namespace MonoTests.Portable.Xaml
 	{
 		PropertyInfo str_len = typeof(string).GetProperty("Length");
 		XamlSchemaContext sctx = new XamlSchemaContext(null, null);
-		XamlType xt, xt3, xt4;
+		XamlType xt, xt3, xt4, xt5;
 		XamlMember xm2, xm3;
 
 		public XamlObjectWriterTest()
@@ -57,6 +58,7 @@ namespace MonoTests.Portable.Xaml
 			xt = new XamlType(typeof(string), sctx);
 			xt3 = new XamlType(typeof(TestClass1), sctx);
 			xt4 = new XamlType(typeof(Foo), sctx);
+			xt5 = new XamlType(typeof(List<TestClass1>), sctx);
 			xm2 = new XamlMember(typeof(TestClass1).GetProperty("TestProp1"), sctx);
 			xm3 = new XamlMember(typeof(TestClass1).GetProperty("TestProp2"), sctx);
 		}
@@ -514,6 +516,32 @@ namespace MonoTests.Portable.Xaml
 		}
 
 		[Test]
+		public void CollectionValueThenStartObject()
+		{
+			var xw = new XamlObjectWriter(sctx, null);
+			xw.WriteStartObject(xt5);
+			xw.WriteStartMember(XamlLanguage.Items);
+			xw.WriteValue(new TestClass1());
+			xw.WriteStartObject(xt3);
+			xw.Close();
+		}
+
+		[Test]
+		public void CollectionMixedObjectsAndValues()
+		{
+			var xw = new XamlObjectWriter(sctx, null);
+			xw.WriteStartObject(xt5);
+			xw.WriteStartMember(XamlLanguage.Items);
+			xw.WriteValue(new TestClass1());
+			xw.WriteStartObject(xt3);
+			xw.WriteEndObject();
+			xw.WriteValue(new TestClass1());
+			xw.WriteStartObject(xt3);
+			xw.WriteEndObject();
+			xw.Close();
+		}
+
+		[Test]
 		// ... unlike XamlXmlWriter (allowed, as it allows StartObject after Value)
 		public void ValueThenNamespace()
 		{
@@ -721,7 +749,7 @@ namespace MonoTests.Portable.Xaml
 			XamlServices.Transform (new XamlObjectReader (obj), xxw);
 			Console.Error.WriteLine (sw);
 			*/
-			var xml = "<TestClass3 xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'><TestClass3.Nested><TestClass3 Nested='{x:Null}' /></TestClass3.Nested></TestClass3>".Replace("net_4_0", Compat.Version);
+			var xml = "<TestClass3 xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'><TestClass3.Nested><TestClass3 Nested='{x:Null}' /></TestClass3.Nested></TestClass3>".UpdateXml();
 			var settings = new XamlObjectWriterSettings();
 			bool invoked = false;
 			settings.XamlSetValueHandler = (sender, e) =>
@@ -744,8 +772,11 @@ namespace MonoTests.Portable.Xaml
 		}
 
 		[Test] // bug #3003 repro
-		public void EventsAndProcessingOrder()
+		public void gsAndProcessingOrder()
 		{
+			if (Compat.IsPortableXaml && !Compat.HasISupportInitializeInterface)
+				Assert.Ignore("The ISupportInitialize starts support from netstandard20");
+			
 			var asm = GetType().GetTypeInfo().Assembly;
 			var context = new XamlSchemaContext(new Assembly[] { asm });
 			var output = XamarinBug3003.TestContext.Writer;
@@ -1334,6 +1365,46 @@ namespace MonoTests.Portable.Xaml
 		}
 
 		[Test]
+		public void Write_AmbientResourceProvider()
+		{
+			// tests whether nesting order is correct when providing ambient values
+			const string resourceValue = "resource content";
+			using (var xr = GetReader("AmbientResourceProvider.xml"))
+			{
+				var outer = (AmbientResourceProvider)XamlServices.Load(xr);
+				var inner = (AmbientResourceProvider)outer.Content;
+				var wrapper = (AmbientResourceWrapper)inner.Content;
+				Assert.AreEqual(resourceValue, wrapper.Foo);
+			}
+		}
+
+#if PCL
+		// this test won't compile with System.Xaml because it uses new 3-arg constructor
+		[Test]
+		public void Write_AmbientResourceWrapper()
+		{
+			// tests whether parent ambient provider is used correctly
+			const string resourceKey = "FooResourceKey";
+			var resource = new object();
+			var ambientResourceProvider = new AmbientResourceProvider
+			{
+				Resources =
+				{
+					[resourceKey] = resource
+				}
+			};
+			var parentAmbientProvider = new SimpleAmbientProvider { Values = new[] { ambientResourceProvider } };
+			using (var xr = GetReader("AmbientResourceWrapper.xml"))
+			{
+				var writer = new XamlObjectWriter(xr.SchemaContext, new XamlObjectWriterSettings(), parentAmbientProvider);
+				XamlServices.Transform(xr, writer);
+				var des = (AmbientResourceWrapper)writer.Result;
+				Assert.AreSame(resource, des.Foo);
+			}
+		}
+#endif
+
+		[Test]
 		public void Write_StaticExtensionWrapper()
 		{
 			var ex = Assert.Throws<XamlObjectWriterException>(() =>
@@ -1598,6 +1669,27 @@ namespace MonoTests.Portable.Xaml
 			}
 		}
 
+		/// <summary>
+		/// Test binding an event to a method with a base EventArgs.
+		/// </summary>
+		/// <remarks>
+		/// This allows you to bind to events that are legal
+		/// </remarks>
+		[Test]
+		public void Write_EventStore5()
+		{
+			if (!Compat.IsPortableXaml)
+				Assert.Ignore("Binding events to methods with base class parameters is not supported in System.Xaml");
+
+			using (var xr = GetReader("EventStore5.xml"))
+			{
+				var res = (EventStore)XamlServices.Load(xr);
+				Assert.IsFalse(res.Method1Invoked, "#1");
+				res.Examine();
+				Assert.IsTrue(res.Method1Invoked, "#2");
+			}
+		}
+
 		[Test]
 		public void Write_AbstractWrapper()
 		{
@@ -1765,6 +1857,18 @@ namespace MonoTests.Portable.Xaml
 				Assert.IsNotNull(obj, "#6");
 				Assert.IsInstanceOf<DeferredLoadingChild>(obj, "#7");
 				Assert.AreEqual("Blah", ((DeferredLoadingChild)obj).Foo, "#8");
+			}
+		}		
+		
+		[Test]
+		public void Write_DeferredLoadingContainerMember2()
+		{
+			using (var xr = GetReader("DeferredLoadingContainerMember2.xml"))
+			{
+				var res = (DeferredLoadingContainerMember2)XamlServices.Load(xr);
+				var obj = res.Child();
+
+				Assert.AreEqual("Blah", obj.Foo);
 			}
 		}
 
@@ -1997,7 +2101,7 @@ namespace MonoTests.Portable.Xaml
 			}
 		}
 
-		#if !PCL136
+#if !PCL136
 		[Test]
 		public void Write_ImmutableCollectionContainer()
 		{
@@ -2053,6 +2157,266 @@ namespace MonoTests.Portable.Xaml
 				Assert.AreEqual ("3", des.Contents [2].Foo, "#4");
 				Assert.AreEqual ("4", des.Contents [3].Foo, "#5");
 			}
+		}
+
+		[Test]
+		public void Read_InvalidPropertiesShouldThrowException()
+		{
+			Assert.Throws<XamlObjectWriterException>(() =>
+			{
+				XamlServices.Load(GetReader("InvalidPropertiesShouldThrowException.xml"));
+			});
+		}
+
+		[Test]
+		public void Write_Attached_Collection()
+		{
+			Attached4 result = null;
+
+			var rsettings = new XamlXmlReaderSettings();
+			using (var reader = new XamlXmlReader(new StringReader($@"<Attached4 xmlns=""{Compat.TestAssemblyNamespace}""><AttachedWrapper4.SomeCollection><TestClass4 Foo=""SomeValue""/></AttachedWrapper4.SomeCollection></Attached4>"), rsettings))
+			{
+				var wsettings = new XamlObjectWriterSettings();
+				using (var writer = new XamlObjectWriter(reader.SchemaContext, wsettings))
+				{
+					XamlServices.Transform(reader, writer, false);
+					result = (Attached4)writer.Result;
+				}
+			}
+
+			Assert.AreEqual(1, result.Property.Count, "#1");
+			Assert.AreEqual("SomeValue", result.Property[0].Foo, "#2");
+
+		}
+
+		[Test]
+		public void Whitespace_ShouldBeCorrectlyHandled()
+		{
+			using (var xr = GetReader("Whitespace.xml"))
+			{
+				var des = (Whitespace)XamlServices.Load(xr);
+				Assert.AreEqual("hello world", des.TabConvertedToSpaces);
+				Assert.AreEqual("hello world", des.NewlineConvertedToSpaces);
+				Assert.AreEqual("hello world", des.ConsecutiveSpaces);
+				Assert.AreEqual("hello world", des.SpacesAroundTags);
+				Assert.AreEqual("hello world", des.Child.Content);
+
+				// TODO: xml:space="preserve" not yet implemented
+				// Assert.AreEqual("  hello world\t", des.Preserve);
+			}
+		}
+
+		[Test]
+		public void CommandContainer()
+		{
+			using (var xr = GetReader("CommandContainer.xml"))
+			{
+				var commandContainer = (CommandContainer)XamlServices.Load(xr);
+				Assert.IsNotNull(commandContainer);
+				Assert.IsNotNull(commandContainer.Command1);
+				Assert.IsInstanceOf<MyCommand>(commandContainer.Command1);
+				Assert.IsNull(commandContainer.Command2);
+			}
+		}
+
+		[Test]
+		public void Write_UnknownContent()
+		{
+			var xw = new XamlObjectWriter(sctx);
+			xw.WriteNamespace(new NamespaceDeclaration(XamlLanguage.Xaml2006Namespace, "x"));
+			xw.WriteStartObject(xt3);
+
+			Assert.Throws<XamlObjectWriterException>(() => xw.WriteStartMember(XamlLanguage.UnknownContent));
+		}
+
+		[Test]
+		public void Write_UnknownType()
+		{
+			var sw = new StringWriter();
+			var xw = new XamlObjectWriter(sctx);
+			xw.WriteStartObject(xt3);
+			xw.WriteStartMember(xt3.GetMember("TestProp1"));
+
+			// This is needed because .NET exception messages depend on the current UI culture, which may not always be English.
+			CultureInfo.CurrentUICulture = new CultureInfo("en-us");
+
+			var ex = Assert.Throws<XamlObjectWriterException>(() => xw.WriteStartObject(new XamlType("unk", "unknown", null, sctx)));
+			Assert.AreEqual("Cannot create unknown type '{unk}unknown'.", ex.Message);
+		}
+
+		[Test]
+		public void Write_DictionaryKeyProperty()
+		{
+			var xw = new XamlObjectWriter(sctx);
+			var xDictionaryContainer = sctx.GetXamlType(typeof(DictionaryContainer));
+			var xDictionaryContainerItems = xDictionaryContainer.GetMember(nameof(DictionaryContainer.Items));
+			var xDictionaryItem = sctx.GetXamlType(typeof(DictionaryItem));
+			var xDictionaryItemKey = xDictionaryItem.GetMember(nameof(DictionaryItem.Key));
+			const string key = "Key";
+
+			xw.WriteNamespace(new NamespaceDeclaration(XamlLanguage.Xaml2006Namespace, "x"));
+			xw.WriteStartObject(xDictionaryContainer);
+			xw.WriteStartMember(xDictionaryContainerItems);
+			xw.WriteGetObject();
+			xw.WriteStartMember(XamlLanguage.Items);
+
+			xw.WriteStartObject(xDictionaryItem);
+			xw.WriteStartMember(xDictionaryItemKey);
+			xw.WriteValue(key);
+			xw.WriteEndMember();
+			xw.WriteEndObject();
+
+			xw.WriteEndMember();
+			xw.WriteEndObject();
+			xw.WriteEndMember();
+			xw.WriteEndObject();
+
+			var result = (DictionaryContainer)xw.Result;
+			Assert.IsTrue(result.Items.TryGetValue(key, out DictionaryItem item));
+			Assert.AreEqual(key, item.Key);
+		}
+
+		[Test]
+		public void TestISupportInitializeBeginInitEqualsEndInit()
+		{
+			var xml =
+$@"<TestClass7 
+		xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0' 
+		xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' />".UpdateXml();
+			
+			XamlSchemaContext context = new XamlSchemaContext();
+
+			TextReader tr = new StringReader(xml);
+
+			XamlObjectWriterSettings xows = new XamlObjectWriterSettings()
+			{
+				RootObjectInstance = new TestClass7()
+			};
+
+			XamlObjectWriter ow = new XamlObjectWriter(context, xows);
+			XamlXmlReader r = new XamlXmlReader(tr);
+
+			XamlServices.Transform(r, ow);
+
+			var testClass = (TestClass7)ow.Result;
+
+			Assert.AreEqual(0, testClass.State);
+		}
+		
+		[Test]
+		public void TestIsUsableDuringInitializationCorrectUsingOnMemberStart()
+		{
+			//NOTE: The assertion are happen in the TestClass8! Here just invoking methods 
+
+			if (Compat.IsPortableXaml && !Compat.HasISupportInitializeInterface)
+				Assert.Ignore("The ISupportInitialize starts support from netstandard20");
+
+			XamlSchemaContext context = new XamlSchemaContext();
+		
+			XamlObjectWriterSettings xows = new XamlObjectWriterSettings();
+
+			XamlObjectWriter ow = new XamlObjectWriter(context, xows);
+
+			var parentXamlType = new XamlType(typeof(TestClass8), context);
+			var childXamlType = new XamlType(typeof(TestClass9), context);
+			
+			Assert.IsTrue(childXamlType.IsUsableDuringInitialization);
+			
+			var xamlMemberFoo = childXamlType.GetMember(nameof(TestClass9.Foo));
+			var xamlMemberBaz = childXamlType.GetMember(nameof(TestClass9.Baz));
+			var xamlMemberBar = parentXamlType.GetMember(nameof(TestClass8.Bar));
+
+			ow.WriteStartObject(parentXamlType);
+			ow.WriteStartMember(xamlMemberBar);
+
+			ow.WriteStartObject(childXamlType);
+			ow.WriteStartMember(xamlMemberFoo);
+			ow.WriteStartObject(xamlMemberFoo.Type);
+			ow.WriteEndObject();
+			ow.WriteEndMember();
+			ow.WriteStartMember(xamlMemberBaz);
+			ow.WriteValue("Test");
+			ow.WriteEndMember();
+			ow.WriteEndObject();
+
+			ow.WriteEndMember();
+			ow.WriteEndObject();
+
+			var result = (TestClass8)ow.Result;
+			Assert.IsTrue(result.Bar.IsInitialized);
+			Assert.IsNotNull(result.Bar.Foo);
+			Assert.AreEqual(result.Bar.Baz, "Test");
+		}
+
+		[Test]
+		public void TestIsUsableDuringInitializationWithCollection()
+		{
+			string xml =
+				@"<TestClass10 xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0'>
+					<TestClass9 Baz='Test1' Bar='42'/>
+					<TestClass9 Baz='Test2'/>
+					<TestClass9/>
+					<TestClass9/>
+				  </TestClass10>".UpdateXml();
+
+			// Note: The most important assert is invoked inside the TestClass10 (CollectionChanged).
+			var result = (TestClass10)XamlServices.Parse(xml);
+
+			Assert.AreEqual(4, result.Items.Count);
+
+			Assert.AreEqual("Test1", result.Items[0].Baz);
+			Assert.AreEqual(42, result.Items[0].Bar);
+
+			Assert.AreEqual("Test2", result.Items[1].Baz);
+			Assert.Zero(result.Items[1].Bar);
+
+			Assert.IsNull(result.Items[2].Baz);
+			Assert.Zero(result.Items[2].Bar);
+		}
+		
+		[Test]
+		public void CollectionShouldNotBeAssigned()
+		{
+			var xml = $@"
+<CollectionAssignnmentTest xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0'>
+    <TestClass4/>	
+</CollectionAssignnmentTest>".UpdateXml();
+			var result = (CollectionAssignnmentTest)XamlServices.Parse(xml);
+
+			Assert.False(result.Assigned);
+			Assert.AreEqual(1, result.Items.Count);
+		}
+
+		[Test]
+		public void CollectionShouldNotBeAssigned2()
+		{
+			var xml = $@"
+<CollectionAssignnmentTest xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0'>
+    <TestClass4/>	
+    <TestClass4/>	
+</CollectionAssignnmentTest>".UpdateXml();
+			var result = (CollectionAssignnmentTest)XamlServices.Parse(xml);
+
+			Assert.False(result.Assigned);
+			Assert.AreEqual(2, result.Items.Count);
+		}
+
+		[Test]
+		public void CollectionShouldBeAssigned()
+		{
+			var xml = $@"
+<CollectionAssignnmentTest xmlns='clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_0'
+					  	   xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
+						   xmlns:scg='clr-namespace:System.Collections.Generic;assembly=mscorlib'>
+	<scg:List x:TypeArguments='TestClass4'>
+		<TestClass4/>	
+		<TestClass4/>	
+	</scg:List>
+</CollectionAssignnmentTest>".UpdateXml();
+			var result = (CollectionAssignnmentTest)XamlServices.Parse(xml);
+
+			Assert.True(result.Assigned);
+			Assert.AreEqual(2, result.Items.Count);
 		}
 	}
 }

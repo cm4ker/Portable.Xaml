@@ -1,4 +1,4 @@
-﻿//
+﻿﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -1148,6 +1148,133 @@ namespace MonoTests.Portable.Xaml
 			Assert.AreEqual(ReadXml("NumericValues_NaN.xml").Trim(), XamlServices.Save(obj), "#1");
 		}
 
+		[Test]
+		public void Write_BaseClassPropertiesInSeparateNamespace()
+		{
+			var obj = new NamespaceTest2.TestClassWithDifferentBaseNamespace
+			{
+				TheName = "MyName",
+				SomeOtherProperty = "OtherValue",
+				Bar = "TheBar",
+				Baz = "TheBaz"
+			};
+			Assert.AreEqual(ReadXml("BaseClassPropertiesInSeparateNamespace.xml").Trim(), XamlServices.Save(obj), "#1");
+		}
+
+		[Test]
+		public void Write_BaseClassPropertiesInSeparateNamespace_WithChildren()
+		{
+			var obj = new NamespaceTest2.TestClassWithDifferentBaseNamespace
+			{
+				TheName = "MyName",
+				SomeOtherProperty = "OtherValue",
+				Bar = "TheBar",
+				Baz = "TheBaz",
+				Other = new TestClass5WithName { Bar = "TheBar2" }
+			};
+			Assert.AreEqual(ReadXml("BaseClassPropertiesInSeparateNamespace_WithChildren.xml").Trim(), XamlServices.Save(obj), "#1");
+		}
+
+		[Test]
+		public void Write_NamedItemWithEmptyString()
+		{
+			var obj = new NamedItem("");
+			Assert.AreEqual(ReadXml("NamedItemWithEmptyString.xml").Trim(), XamlServices.Save(obj), "#1");
+		}
+
+		[Test]
+		public void Write_EscapedPropertyValue()
+		{
+			var obj = new TestClass5();
+			obj.Bar = "{ Some Value That Should Be Escaped";
+			Assert.AreEqual(ReadXml("EscapedPropertyValue.xml").Trim(), XamlServices.Save(obj), "#1");
+		}
+
+		[Test]
+		public void Write_MarkupExtensionCommaSeparateAttributes()
+		{
+			var xaml = $"<?xml version=\"1.0\" encoding=\"utf-16\"?><TestClass4 Foo=\"{{MyExtension5 Foo=test, Bar=Bar}}\" xmlns=\"clr-namespace:{typeof(MyExtension5).Namespace};assembly={typeof(MyExtension5).Assembly.GetName().Name}\" />";
+
+			MyExtension5 e = new MyExtension5("test", "test");
+
+			var context = new XamlSchemaContext(null, null);
+			var sw = new StringWriter();
+
+			System.Xml.XmlWriter tw = System.Xml.XmlWriter.Create(sw);
+
+			XamlXmlWriter xw = new XamlXmlWriter(tw, context);
+
+			var testXType = context.GetXamlType(typeof(TestClass4));
+			var text = testXType.GetMember("Foo");
+
+			var xt = context.GetXamlType(typeof(MyExtension5));
+			var m1 = xt.GetMember("Foo");
+			var m2 = xt.GetMember("Bar");
+
+			xw.WriteStartObject(testXType);
+
+			xw.WriteStartMember(text);
+
+			xw.WriteStartObject(xt);
+			xw.WriteStartMember(m1);
+			xw.WriteValue("test");
+			xw.WriteEndMember();
+
+			xw.WriteStartMember(m2);
+			xw.WriteValue("Bar");
+			xw.WriteEndMember();
+
+			xw.WriteEndObject();
+
+			xw.WriteEndMember();
+			xw.WriteEndObject();
+
+
+			xw.Close();
+			tw.Close();
+
+			Assert.AreEqual(xaml, sw.GetStringBuilder().Replace("  ", " ").ToString());
+		}
+		
+		[Test]
+		public void Write_ShouldSerializeObject()
+		{
+			if (!Compat.IsPortableXaml)
+			{
+				Assert.Ignore("This is not support in System.Xaml");
+			}
+			else
+			{
+				var instance = new ShouldSerializeInvisibleTest();
+				var actual = XamlServices.Save(instance);
+
+				Assert.IsEmpty(actual);
+			}
+		}
+		
+		[Test]
+		public void Write_ShoudSerializeObjectInCollection()
+		{
+			if (!Compat.IsPortableXaml)
+			{
+				Assert.Ignore("This is not support in System.Xaml");
+			}
+			else
+			{
+				var xaml = @"<ShouldSerializeInCollectionTest xmlns=""clr-namespace:MonoTests.Portable.Xaml;assembly=Portable.Xaml_test_net_4_5"" xmlns:scg=""clr-namespace:System.Collections.Generic;assembly=mscorlib"" xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
+  <ShouldSerializeInCollectionTest.Collection>
+    <scg:List x:TypeArguments=""ShouldSerializeInvisibleTest"" Capacity=""4"">
+      <ShouldSerializeInvisibleTest IsVisibleInXml=""True"" Value=""This is visible"" />
+      <ShouldSerializeInvisibleTest IsVisibleInXml=""True"" Value=""This is visible"" />
+    </scg:List>
+  </ShouldSerializeInCollectionTest.Collection>
+</ShouldSerializeInCollectionTest>".UpdateXml();
+				
+				var instance = new ShouldSerializeInCollectionTest();
+				var actual = XamlServices.Save(instance);
+				Assert.AreEqual(xaml, actual);
+			}
+		}
 	}
 
 	public class TestXmlWriterClass1

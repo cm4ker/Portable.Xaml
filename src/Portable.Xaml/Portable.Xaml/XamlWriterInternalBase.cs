@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 // Copyright (C) 2012 Xamarin Inc. http://xamarin.com
 //
@@ -41,14 +41,20 @@ namespace Mono.Xaml
 namespace Portable.Xaml
 #endif
 {
-	abstract class XamlWriterInternalBase : IProvideValueTarget, IRootObjectProvider, IDestinationTypeProvider, IAmbientProvider
+	abstract class XamlWriterInternalBase : IProvideValueTarget, IRootObjectProvider, IDestinationTypeProvider
 	{
 		protected XamlWriterInternalBase(XamlSchemaContext schemaContext, XamlWriterStateManager manager)
+			: this(schemaContext, manager, null)
 		{
+		}
+
+		protected XamlWriterInternalBase(XamlSchemaContext schemaContext, XamlWriterStateManager manager, IAmbientProvider parentAmbientProvider = null)
+		{
+			this.object_states = new ObjectStateStack(parentAmbientProvider);
 			this.sctx = schemaContext;
 			this.manager = manager;
 			var p = new PrefixLookup(sctx) { IsCollectingNamespaces = true }; // it does not raise unknown namespace error.
-			service_provider = new ValueSerializerContext(p, schemaContext, this, this, this, this, this as IXamlObjectWriterFactory);
+			service_provider = ValueSerializerContext.Create(p, schemaContext, object_states.GetAmbientProvider, this, this, this, this as IXamlObjectWriterFactory);
 		}
 
 		internal XamlSchemaContext sctx;
@@ -57,14 +63,12 @@ namespace Portable.Xaml
 		internal ValueSerializerContext service_provider;
 
 		internal ObjectState root_state;
-		internal Stack<ObjectState> object_states = new Stack<ObjectState>();
+		internal readonly ObjectStateStack object_states;
 		internal PrefixLookup prefix_lookup => (PrefixLookup)service_provider.GetService(typeof(INamespacePrefixLookup));
 
 		public Type GetDestinationType() => CurrentMember?.Type.UnderlyingType;
 
 		List<NamespaceDeclaration> Namespaces => prefix_lookup.Namespaces;
-
-		internal virtual IAmbientProvider AmbientProvider => null;
 
 		internal class ObjectState
 		{
@@ -75,7 +79,7 @@ namespace Portable.Xaml
 				public const int IsGetObject = 1 << 0;
 				public const int IsInstantiated = 1 << 1;
 				public const int IsXamlWriterCreated = 1 << 2;
-				public const int HasSeparator = 1 << 3;
+				public const int IsValueProvidedByParent = 1 << 3;
 			}
 
 			public bool IsGetObject
@@ -93,14 +97,14 @@ namespace Portable.Xaml
 				get { return _flags.Get(ObjectStateFlags.IsXamlWriterCreated) ?? false; }
 				set { _flags.Set(ObjectStateFlags.IsXamlWriterCreated, value); }
 			}
-			public bool HasSeparator
-			{
-				get { return _flags.Get(ObjectStateFlags.HasSeparator) ?? false; }
-				set { _flags.Set(ObjectStateFlags.HasSeparator, value); }
-			}
 
 			public int PositionalParameterIndex = -1;
 
+			public bool IsValueProvidedByParent // affects AfterProperties() calls.
+			{
+				get { return _flags.Get(ObjectStateFlags.IsValueProvidedByParent) ?? false; }
+				set { _flags.Set(ObjectStateFlags.IsValueProvidedByParent, value); }
+			}
 			public string FactoryMethod;
 			public object Value;
 			public object KeyValue;
@@ -130,6 +134,7 @@ namespace Portable.Xaml
 			public XamlMember Member;
 			public object Value;
 			public AllowedMemberLocations OccuredAs = AllowedMemberLocations.None;
+			public bool IsAlreadySet;
 		}
 
 		public virtual void CloseAll()
@@ -194,6 +199,7 @@ namespace Portable.Xaml
 			object_states.Push(state);
 
 			OnWriteGetObject();
+			manager.GotObject(object_states.Peek().Type);
 		}
 
 		public void WriteNamespace(NamespaceDeclaration namespaceDeclaration)
@@ -212,7 +218,7 @@ namespace Portable.Xaml
 			if (ReferenceEquals(xamlType, null))
 				throw new ArgumentNullException("xamlType");
 
-			manager.StartObject();
+			manager.StartObject(xamlType);
 			var cstate = new ObjectState() { Type = xamlType };
 			object_states.Push(cstate);
 
@@ -294,10 +300,8 @@ namespace Portable.Xaml
 		protected string GetValueString(XamlMember xm, object value)
 		{
 			// change XamlXmlReader too if we change here.
-			if ((value as string) == String.Empty) // FIXME: there could be some escape syntax.
-				return "\"\"";
-			if (value is string)
-				return (string)value;
+			if (value is string stringValue)
+				return stringValue;
 
 			var xt = value == null ? XamlLanguage.Null : sctx.GetXamlType(value.GetType());
 			var vs = xm.ValueSerializer ?? xt.ValueSerializer;
@@ -307,66 +311,162 @@ namespace Portable.Xaml
 				throw new XamlXmlWriterException(String.Format("Value type is '{0}' but it must be either string or any type that is convertible to string indicated by TypeConverterAttribute.", value != null ? value.GetType() : null));
 		}
 
-		#region IAmbientProvider
+		internal class ObjectStateStack
+		{
+			private readonly Stack<StackItem> stack = new Stack<StackItem>();
+			private readonly IAmbientProvider parentAmbientProvider;
+
+			public ObjectStateStack(IAmbientProvider parentAmbientProvider = null)
+			{
+				this.parentAmbientProvider = parentAmbientProvider;
+			}
+
+			public ObjectState Peek() => stack.Peek().ObjectState;
+
+			public ObjectState Pop() => stack.Pop().ObjectState;
+
+			public void Push(ObjectState item) => stack.Push(new StackItem(item));
+
+			public int Count => stack.Count;
+
+			public IAmbientProvider GetAmbientProvider()
+			{
+				// if we already have one for this stack state, provide
+				var existingProvider = stack.Peek().AmbientProvider;
+				if (existingProvider != null)
+				{
+					return existingProvider;
+				}
+				// else, create one, add it to stack state and return.
+				var provider = CreateAmbientProvider();
+				var state = Pop();
+				stack.Push(new StackItem(state, provider));
+				return provider;
+			}
+			private IAmbientProvider CreateAmbientProvider()
+			{
+				IAmbientProvider basicAmbientProvider = new ObjectStatesAmbientProvider(stack.Select(x => x.ObjectState));
+				var ambientProvider =
+					parentAmbientProvider == null ? basicAmbientProvider
+						: new StackAmbientProvider(basicAmbientProvider, parentAmbientProvider);
+				return ambientProvider;
+			}
+
+			private struct StackItem
+			{
+				public StackItem(ObjectState objectState, IAmbientProvider provider = null)
+				{
+					ObjectState = objectState;
+					AmbientProvider = provider;
+				}
+				public readonly ObjectState ObjectState;
+				public readonly IAmbientProvider AmbientProvider;
+			}
+		}
+
+		private class ObjectStatesAmbientProvider : IAmbientProvider
+		{
+			public ObjectStatesAmbientProvider(IEnumerable<ObjectState> objectStates)
+			{
+				object_states = objectStates.ToArray();
+			}
+
+			private IReadOnlyCollection<ObjectState> object_states { get; }
+
+			public IEnumerable<object> GetAllAmbientValues(params XamlType[] types)
+			{
+				return GetAllAmbientValues(null, false, types).Select(r => r.Value);
+			}
+
+			public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties)
+			{
+				return GetAllAmbientValues(ceilingTypes, false, null, properties);
+			}
+
+			public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties)
+			{
+				// check arguments
+				if (properties == null)
+					throw new ArgumentNullException("properties");
+
+				var nonAmbientProperty = properties.FirstOrDefault(r => !r.IsAmbient);
+				if (nonAmbientProperty != null)
+					throw new ArgumentException(nonAmbientProperty.ToString() + "is not an ambient property", "properties");
+
+				return DoGetAllAmbientValues(ceilingTypes, searchLiveStackOnly, types, properties);
+			}
+
+			private IEnumerable<AmbientPropertyValue> DoGetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties)
+			{
+				foreach (var state in object_states)
+				{
+					if (ceilingTypes != null && ceilingTypes.Contains(state.Type))
+						yield break;
+
+					if (types != null)
+					{
+						if (types.Any(xt => xt.UnderlyingType != null && state.Type.CanAssignTo(xt)))
+							yield return new AmbientPropertyValue(null, state.Value);
+					}
+					if (properties != null)
+					{
+						// get ambient properties in the stack
+						foreach (var prop in properties)
+						{
+							if (!state.Type.CanAssignTo(prop.DeclaringType))
+								continue;
+							var value = prop.Invoker.GetValue(state.Value);
+							yield return new AmbientPropertyValue(prop, value);
+						}
+					}
+				}
+			}
+
+			public object GetFirstAmbientValue(params XamlType[] types)
+			{
+				return GetAllAmbientValues(types).FirstOrDefault();
+			}
+
+			public AmbientPropertyValue GetFirstAmbientValue(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties)
+			{
+				return GetAllAmbientValues(ceilingTypes, properties).FirstOrDefault();
+			}
+		}
+	}
+
+	internal class StackAmbientProvider : IAmbientProvider
+	{
+		public StackAmbientProvider(params IAmbientProvider[] providers)
+		{
+			Providers = providers;
+		}
+
+		private IAmbientProvider[] Providers { get; }
 
 		public IEnumerable<object> GetAllAmbientValues(params XamlType[] types)
 		{
-			return GetAllAmbientValues(null, false, types).Select(r => r.Value);
+			return Providers.SelectMany(x => x.GetAllAmbientValues(types));
 		}
 
 		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties)
 		{
-			return GetAllAmbientValues(ceilingTypes, false, null, properties);
+			return Providers.SelectMany(x => x.GetAllAmbientValues(ceilingTypes, properties));
 		}
 
-		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties)
+		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types,
+			params XamlMember[] properties)
 		{
-			// check arguments
-			if (properties == null)
-				throw new ArgumentNullException("properties");
-
-			var nonAmbientProperty = properties.FirstOrDefault(r => !r.IsAmbient);
-			if (nonAmbientProperty != null)
-				throw new ArgumentException(nonAmbientProperty.ToString() + "is not an ambient property", "properties");
-
-			return DoGetAllAmbientValues(ceilingTypes, searchLiveStackOnly, types, properties);
-		}
-
-		private IEnumerable<AmbientPropertyValue> DoGetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties)
-		{
-			foreach (var state in object_states)
-			{
-				if (ceilingTypes != null && ceilingTypes.Contains(state.Type))
-					yield break;
-
-				if (types != null)
-				{
-					if (types.Any(xt => xt.UnderlyingType != null && xt.CanAssignFrom(state.Type)))
-						yield return new AmbientPropertyValue(null, state.Value);
-				}
-				if (properties != null)
-				{
-					// get ambient properties in the stack
-					foreach (var prop in properties)
-					{
-						if (!prop.DeclaringType.CanAssignFrom(state.Type))
-							continue;
-						var value = prop.Invoker.GetValue(state.Value);
-						yield return new AmbientPropertyValue(prop, value);
-					}
-				}
-			}
+			return Providers.SelectMany(x => x.GetAllAmbientValues(ceilingTypes, searchLiveStackOnly, types, properties));
 		}
 
 		public object GetFirstAmbientValue(params XamlType[] types)
 		{
-			return GetAllAmbientValues(types).FirstOrDefault();
+			return Providers.SelectMany(x => x.GetAllAmbientValues(types)).FirstOrDefault();
 		}
 
 		public AmbientPropertyValue GetFirstAmbientValue(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties)
 		{
-			return GetAllAmbientValues(ceilingTypes, properties).FirstOrDefault();
+			return Providers.SelectMany(x => x.GetAllAmbientValues(ceilingTypes, properties)).FirstOrDefault();
 		}
-		#endregion
 	}
 }

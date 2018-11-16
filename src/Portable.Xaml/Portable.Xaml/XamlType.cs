@@ -1,4 +1,4 @@
-﻿﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -28,10 +28,12 @@ using System.Linq;
 using System.Reflection;
 using Portable.Xaml.Markup;
 using Portable.Xaml.Schema;
-using System.Xml.Serialization;
 using System.Collections.ObjectModel;
 using System.Runtime.CompilerServices;
 using System.ComponentModel;
+#if !NETSTANDARD1_0
+using System.Xml.Serialization;
+#endif
 
 namespace Portable.Xaml
 {
@@ -63,12 +65,14 @@ namespace Portable.Xaml
 			public const int ConstructionRequiresArguments = 1 << 12;
 			public const int IsImmutable = 1 << 13;
 			public const int IsImmutableCollection = 1 << 14;
+			public const int ShouldSerialize = 1 << 15;
 		}
 
 		Type type, underlying_type;
 		XamlTypeInvoker invoker;
 		string explicit_ns;
 		string internalXmlName;
+		string preferredXamlNamespace;
 		Dictionary<XamlDirective, XamlMember> aliased_property_cache;
 		XamlCollectionKind? collectionKind;
 		ReferenceValue<IList<XamlType>> allowedContentTypes;
@@ -87,6 +91,7 @@ namespace Portable.Xaml
 		IList<string> xamlNamespaces;
 		IList<XamlMember> constructorArguments;
 		Dictionary<string, XamlMember> memberLookup;
+		ReferenceValue<MethodInfo> shouldSerializeMethod;
 
 		public XamlType(Type underlyingType, XamlSchemaContext schemaContext)
 			: this(underlyingType, schemaContext, null)
@@ -94,22 +99,22 @@ namespace Portable.Xaml
 		}
 
 
-		static readonly Type[] mscorlib_types = { 
-			Type.GetType("System.Collections.IList`1, System.Colletions.Generic", false), 
-			typeof(bool), 
-			Type.GetType("System.Collections.ArrayList, System.Colletions.NonGeneric", false) 
+		static readonly Type[] mscorlib_types = {
+			Type.GetType("System.Collections.IList`1, System.Colletions.Generic", false),
+			typeof(bool),
+			Type.GetType("System.Collections.ArrayList, System.Colletions.NonGeneric", false)
 		};
 
-		static readonly string[] mscorlib_assemblies = new string[] {
-			"System.Collections.Generic",
-			"System.Private.CoreLib",
-			"System.Collections.NonGeneric"
+		internal static readonly string[] mscorlib_assemblies = new string[] {
+			/*"System.Collections.Generic",
+			"System.Collections.NonGeneric",*/
+			"System.Private.CoreLib"
 		};
 
-			/*mscorlib_types.Where(r => r != null)
-		                                                               .Select(r => r.GetTypeInfo().Assembly)
-		                                                               .Distinct()
-		                                                               .ToArray();*/
+		/*mscorlib_types.Where(r => r != null)
+																   .Select(r => r.GetTypeInfo().Assembly)
+																   .Distinct()
+																   .ToArray();*/
 		//		static readonly Type [] predefined_types = {
 		//				typeof (XData), typeof (Uri), typeof (TimeSpan), typeof (PropertyDefinition), typeof (MemberDefinition), typeof (Reference)
 		//			};
@@ -132,21 +137,16 @@ namespace Portable.Xaml
 					Name = "Member";
 				else
 					Name = GetXamlName(type);
-				PreferredXamlNamespace = XamlLanguage.Xaml2006Namespace;
+				preferredXamlNamespace = XamlLanguage.Xaml2006Namespace;
 			}
 			else if (!ReferenceEquals(xt = XamlLanguage.AllTypes.FirstOrDefault(t => t.UnderlyingType == type), null))
 			{
 				Name = xt.Name;
-				PreferredXamlNamespace = XamlLanguage.Xaml2006Namespace;
+				preferredXamlNamespace = XamlLanguage.Xaml2006Namespace;
 			}
 			else
 			{
 				Name = GetXamlName(type);
-				var assembly = type.GetTypeInfo().Assembly;
-				string assemblyName = assembly.GetName().Name;
-				if (mscorlib_assemblies.Contains(assemblyName))
-					assemblyName = "mscorlib";
-				PreferredXamlNamespace = schemaContext.GetXamlNamespace(type.Namespace) ?? String.Format("clr-namespace:{0};assembly={1}", type.Namespace, assemblyName);
 			}
 			if (type.GetTypeInfo().IsGenericType)
 			{
@@ -166,7 +166,7 @@ namespace Portable.Xaml
 
 			type = typeof(object);
 			Name = unknownTypeName;
-			PreferredXamlNamespace = unknownTypeNamespace;
+			preferredXamlNamespace = unknownTypeNamespace;
 			TypeArguments = typeArguments == null || typeArguments.Count == 0 ? null : typeArguments.ToReadOnly();
 			explicit_ns = unknownTypeNamespace;
 		}
@@ -251,7 +251,22 @@ namespace Portable.Xaml
 
 		public string Name { get; private set; }
 
-		public string PreferredXamlNamespace { get; private set; }
+		public string PreferredXamlNamespace => preferredXamlNamespace ?? (preferredXamlNamespace = LookupPreferredXamlNamespace());
+
+		string LookupPreferredXamlNamespace()
+		{
+			var ns = SchemaContext.GetXamlNamespace(type.Namespace);
+			if (ns != null)
+				return ns;
+
+			var assembly = type.GetTypeInfo().Assembly;
+			var forwarded = assembly.GetCustomAttributes<TypeForwardedToAttribute>();
+			var forwarded2 = assembly.GetCustomAttributes<TypeForwardedFromAttribute>();
+			string assemblyName = assembly.GetName().Name;
+			if (mscorlib_assemblies.Contains(assemblyName))
+				assemblyName = "mscorlib";
+			return $"clr-namespace:{type.Namespace};assembly={assemblyName}";
+		}
 
 		public XamlSchemaContext SchemaContext { get; private set; }
 
@@ -259,7 +274,12 @@ namespace Portable.Xaml
 
 		public IList<XamlType> TypeArguments { get; private set; }
 
-		public XamlValueConverter<TypeConverter> TypeConverter => typeConverter.HasValue ? typeConverter.Value : typeConverter.Set(LookupTypeConverter());
+#if HAS_TYPE_CONVERTER
+		public
+#else
+		internal
+#endif
+		XamlValueConverter<TypeConverter> TypeConverter => typeConverter.HasValue ? typeConverter.Value : typeConverter.Set(LookupTypeConverter());
 
 		public Type UnderlyingType => underlying_type ?? (underlying_type = LookupUnderlyingType());
 
@@ -320,38 +340,44 @@ namespace Portable.Xaml
 			//return String.IsNullOrEmpty (PreferredXamlNamespace) ? Name : String.Concat ("{", PreferredXamlNamespace, "}", Name);
 		}
 
-		internal bool CanConvertFrom(XamlType inputType)
+		/// <summary>
+		/// Gets a value indicating this type can be assigned or converted from the specified type.
+		/// </summary>
+		/// <returns><c>true</c>, if it can be assigned or converted from the input type , <c>false</c> otherwise.</returns>
+		/// <param name="xamlType">Type to convert from.</param>
+		[EnhancedXaml]
+		public bool CanConvertFrom(XamlType xamlType)
 		{
-			if (CanAssignFrom(inputType))
+			if (xamlType.CanAssignTo(this))
 				return true;
 
 			var tc = TypeConverter?.ConverterInstance;
 			if (tc != null)
 			{
-				return tc.CanConvertFrom(inputType?.UnderlyingType ?? typeof(object));
+				return tc.CanConvertFrom(xamlType?.UnderlyingType ?? typeof(object));
 			}
 
 			return false;
 		}
 
-		internal bool CanConvertTo(XamlType inputType)
+		/// <summary>
+		/// Gets a value indicating this type can be assigned or converted to the specified type
+		/// </summary>
+		/// <returns><c>true</c>, if it can be assigned or converted to the input type , <c>false</c> otherwise.</returns>
+		/// <param name="xamlType">Type to convert to.</param>
+		[EnhancedXaml]
+		public bool CanConvertTo(XamlType xamlType)
 		{
-			if (CanAssignTo(inputType))
+			if (CanAssignTo(xamlType))
 				return true;
 
 			var tc = TypeConverter?.ConverterInstance;
 			if (tc != null)
 			{
-				return tc.CanConvertTo(inputType?.UnderlyingType ?? typeof(object));
+				return tc.CanConvertTo(xamlType?.UnderlyingType ?? typeof(object));
 			}
 
 			return false;
-		}
-
-
-		internal bool CanAssignFrom(XamlType inputType)
-		{
-			return inputType.CanAssignTo(this);
 		}
 
 		[EnhancedXaml]
@@ -475,8 +501,11 @@ namespace Portable.Xaml
 
 			if (type != null)
 			{
+				var assemblyName = type.GetTypeInfo().Assembly.GetName().Name;
+				if (mscorlib_assemblies.Contains(assemblyName))
+					assemblyName = "mscorlib";
 				// type always exists in clr namespace
-				yield return string.Format("clr-namespace:{0};assembly={1}", type.Namespace, type.GetTypeInfo().Assembly.GetName().Name);
+				yield return $"clr-namespace:{type.Namespace};assembly={assemblyName}";
 
 				// check if it's a built-in type
 				if (XamlLanguage.AllTypes.Any(r => r.UnderlyingType == type))
@@ -623,7 +652,11 @@ namespace Portable.Xaml
 					(
 						pi.CanWrite
 						|| IsCollectionType(pi.PropertyType)
-						|| typeof(IXmlSerializable).GetTypeInfo().IsAssignableFrom(pi.PropertyType.GetTypeInfo())
+#if NETSTANDARD1_0
+						|| (ReflectionHelpers.IXmlSerializableType?.GetTypeInfo().IsAssignableFrom(pi.PropertyType.GetTypeInfo()) ?? false)
+#else
+					    || typeof(IXmlSerializable).GetTypeInfo().IsAssignableFrom(pi.PropertyType.GetTypeInfo())
+#endif
 						|| pi.GetCustomAttribute<ConstructorArgumentAttribute>() != null
 					)
 					&& pi.GetIndexParameters().Length == 0)
@@ -741,7 +774,10 @@ namespace Portable.Xaml
 
 		internal ICustomAttributeProvider CustomAttributeProvider => attributeProvider.HasValue ? attributeProvider.Value : attributeProvider.Set(LookupCustomAttributeProvider());
 
-		protected virtual ICustomAttributeProvider LookupCustomAttributeProvider()
+#if HAS_CUSTOM_ATTRIBUTE_PROVIDER
+		protected
+#endif
+		internal virtual ICustomAttributeProvider LookupCustomAttributeProvider()
 		{
 			return UnderlyingType != null ? SchemaContext.GetCustomAttributeProvider(UnderlyingType) : null;
 		}
@@ -819,7 +855,7 @@ namespace Portable.Xaml
 
 		protected virtual bool LookupIsXData()
 		{
-			return CanAssignTo(SchemaContext.GetXamlType(typeof(IXmlSerializable)));
+			return ReflectionHelpers.IXmlSerializableType != null && CanAssignTo(SchemaContext.GetXamlType(ReflectionHelpers.IXmlSerializableType));
 		}
 
 		protected virtual XamlType LookupItemType()
@@ -928,11 +964,20 @@ namespace Portable.Xaml
 			return this.GetCustomAttribute<TrimSurroundingWhitespaceAttribute>() != null;
 		}
 
-		protected virtual XamlValueConverter<TypeConverter> LookupTypeConverter()
+#if HAS_TYPE_CONVERTER
+		protected
+#else
+		internal
+#endif
+		virtual XamlValueConverter<TypeConverter> LookupTypeConverter()
 		{
 			var t = UnderlyingType;
 			if (t == null)
 				return null;
+
+			var converterName = CustomAttributeProvider.GetTypeConverterName(false);
+			if (converterName != null)
+				return SchemaContext.GetValueConverter<TypeConverter>(Type.GetType(converterName), this);
 
 			// equivalent to TypeExtension.
 			// FIXME: not sure if it should be specially handled here.
@@ -941,36 +986,23 @@ namespace Portable.Xaml
 
 			t = Nullable.GetUnderlyingType(t) ?? t;
 
-			var a = CustomAttributeProvider;
-			var ca = a?.GetCustomAttribute<TypeConverterAttribute>(false);
-			if (ca != null)
-				return SchemaContext.GetValueConverter<TypeConverter>(Type.GetType(ca.ConverterTypeName), this);
-
 			if (t == typeof(object)) // This is a special case. ConverterType is null.
 				return SchemaContext.GetValueConverter<TypeConverter>(null, this);
 
 			if (t == typeof(DateTime))
-				return SchemaContext.GetValueConverter<TypeConverter>(typeof(ComponentModel.DateTimeConverter), this);
+				return SchemaContext.GetValueConverter<TypeConverter>(typeof(ComponentModel.PortableXamlDateTimeConverter), this);
 
 			if (t == typeof(Uri))
-				return SchemaContext.GetValueConverter<TypeConverter>(typeof(UriTypeConverter), this);
+				return SchemaContext.GetValueConverter<TypeConverter>(typeof(Portable.Xaml.ComponentModel.UriTypeConverter), this);
 
 			// It's still not decent to check CollectionConverter.
-			var tc = t.GetTypeConverter();
-			var tct = tc?.GetType();
 
-			if (tct != null
-				&& tct != typeof(TypeConverter)
-#if NETSTANDARD
-				&& tct != typeof(CollectionConverter)
-#else
-				&& tct.FullName != "System.ComponentModel.CollectionConverter"
-#endif
-				&& tct.FullName != "System.ComponentModel.ReferenceConverter"
-			)
+			var tc = t.GetTypeConverter();
+
+			if (tc != null && !tc.IsBaseTypeConverter())
 			{
-				var vc = SchemaContext.GetValueConverter<TypeConverter>(tct, this);
-				vc.InitialConverterInstance = tc;
+				var vc = SchemaContext.GetValueConverter<TypeConverter>(tc.GetType(), this);
+				vc.ConverterInstance = tc;
 				return vc;
 			}
 
@@ -1017,6 +1049,79 @@ namespace Portable.Xaml
 			return null;
 		}
 
+#if !PCL || NETSTANDARD
+		/// <summary>
+		/// Visability object during serialization. This property lookup attribute <see cref="System.ComponentModel.DesignerSerializationVisibilityAttribute"/>
+		/// </summary>
+		[EnhancedXaml]
+		public DesignerSerializationVisibility SerializationVisibility
+		{
+			get
+			{
+				var c = this.CustomAttributeProvider;
+				var a = c == null ? null : c.GetCustomAttribute<DesignerSerializationVisibilityAttribute>(false);
+				return a != null ? a.Visibility : DesignerSerializationVisibility.Visible;
+			}
+		}
+#endif
+		
+		/// <summary>
+		/// Check instance can it serialize using <see cref="LookupShouldSerialize"/> and check the ShouldSerialize method in underlaing class 
+		/// </summary>
+		/// <param name="instance">The instance of the object (instance type must equals <see cref="UnderlyingType"/>)</param>
+		internal bool ShouldSerialize(object instance)
+		{
+			var shouldSerialize = flags.Get(TypeFlags.ShouldSerialize) ?? flags.Set(TypeFlags.ShouldSerialize, LookupShouldSerialize());
+
+			if (!shouldSerialize)
+				return false;
+
+			if (!shouldSerializeMethod.HasValue)
+				shouldSerializeMethod.Set(LookupShouldSerializeMethod());
+
+			if (shouldSerializeMethod.Value != null)
+			{
+				return (bool)shouldSerializeMethod.Value.Invoke(instance, null);
+			}
+
+			return true;
+		}
+
+		/// <summary>
+		/// Lookup the method with name "ShouldSerialize" with return type is boolean and 0 arguments
+		/// </summary>
+		/// <returns>Method info if method found and null if not</returns>
+		MethodInfo LookupShouldSerializeMethod()
+		{
+			var attr = this.CustomAttributeProvider.GetCustomAttribute<ShouldSerializeAttribute>(false);
+			if (attr != null)
+			{
+				var methods = UnderlyingType?.GetTypeInfo().GetDeclaredMethods(attr.MethodName);
+				if (methods != null)
+					foreach (var method in methods)
+					{
+						if (method.GetParameters().Length == 0 && method.ReturnType == typeof(bool))
+						{
+							return method;
+						}
+					}
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Lookup SerializationVisability attribute 
+		/// </summary>
+		bool LookupShouldSerialize()
+		{
+			bool shouldSerialize = true;
+#if !PCL || NETSTANDARD
+			shouldSerialize &= SerializationVisibility != DesignerSerializationVisibility.Hidden;
+#endif
+			return shouldSerialize;
+		}
+		
 		static string GetXamlName (Type type)
 		{
 			string n;

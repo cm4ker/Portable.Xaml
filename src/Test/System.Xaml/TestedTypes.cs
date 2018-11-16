@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -32,18 +32,15 @@ using System.Reflection;
 using System.Xml;
 using System.Xml.Schema;
 using System.Xml.Serialization;
+using System.Windows.Input;
 using NUnit.Framework;
 using sc = System.ComponentModel;
 #if !PCL136
 using System.Collections.Immutable;
 #endif
 
-#if NETSTANDARD
-using ISupportInitialize = Portable.Xaml.ComponentModel.ISupportInitialize;
+#if NETSTANDARD || PCL
 using System.ComponentModel;
-using DateTimeConverter = System.ComponentModel.DateTimeConverter;
-#elif PCL
-using DateTimeConverter = Portable.Xaml.ComponentModel.DateTimeConverter;
 #endif
 
 #if PCL
@@ -104,8 +101,43 @@ namespace MonoTests.Portable.Xaml.NamespaceTest
 	}
 }
 
+namespace MonoTests.Portable.Xaml.NamespaceTest2
+{
+	public class TestClassWithDifferentBaseNamespace : MonoTests.Portable.Xaml.TestClass5WithName
+	{
+		public string SomeOtherProperty { get; set; }
+	}
+
+	public class AttachedWrapperWithDifferentBaseNamespace : AttachedPropertyStore
+	{
+		public AttachedWrapperWithDifferentBaseNamespace()
+		{
+			Value = new Attached();
+		}
+
+		public Attached Value { get; set; }
+	}
+}
+
 namespace MonoTests.Portable.Xaml
 {
+	class MyCommand : ICommand
+	{
+		#pragma warning disable 67
+		public event EventHandler CanExecuteChanged;
+		#pragma warning restore 67
+
+		public bool CanExecute(object parameter) => true;
+
+		public void Execute(object parameter)
+		{
+		}
+	}
+
+	public static class StaticValues
+	{
+		public static ICommand Command => new MyCommand();
+	}
 
 	public class ArgumentAttributed
 	{
@@ -346,6 +378,151 @@ namespace MonoTests.Portable.Xaml
 		public DateTime TheDateAndTime { get; set; }
 	}
 
+	public class TestClass7 : ISupportInitialize
+	{
+		public int State { get; set; }
+
+		public void BeginInit()
+		{
+			State++;
+		}
+
+		public void EndInit()
+		{
+			State--;
+		}
+	}
+
+	public class TestClass8
+	{
+		private TestClass9 _bar;
+
+		public TestClass9 Bar
+		{
+			get => _bar;
+			set
+			{
+				// Make sure we don't set this value twice.
+				Assert.IsNull(_bar);
+
+				_bar = value;
+				
+				// The value must be instantiated, but not yet initialized.
+				Assert.IsFalse(_bar.IsInitialized);
+				Assert.IsNull(_bar.Foo);
+			}
+		}
+	}
+
+  	[UsableDuringInitialization(true)]
+	public class TestClass9 : ISupportInitialize
+	{
+		public TestClass7 Foo { get; set; }
+
+		public int Bar { get; set; }
+
+		public string Baz { get; set; }
+
+		public bool IsInitialized { get; private set;}
+
+		/// <inheritdoc />
+		public void BeginInit()
+		{
+			Assert.IsFalse(IsInitialized);
+		}
+
+		/// <inheritdoc />
+		public void EndInit()
+		{
+			Assert.IsFalse(IsInitialized);
+			IsInitialized = true;
+		}
+	}
+
+	[ContentProperty(nameof(Items))]
+	public class TestClass10
+	{
+		public TestClass10()
+		{
+			var collection = new ObservableCollection<TestClass9>();
+			collection.CollectionChanged += (sender, args) =>
+			{
+				foreach (TestClass9 item in args.NewItems)
+				{
+					Assert.IsFalse(item.IsInitialized);
+					Assert.Zero(item.Bar);
+					Assert.IsNull(item.Baz);
+				}
+			};
+
+			Items = collection;
+		}
+
+		public IList<TestClass9> Items { get; }
+	}
+	
+#if PCL
+	[ShouldSerializeAttribute(nameof(CustomShouldSerializeMethod))]
+#endif
+	public class ShouldSerializeInvisibleTest
+	{
+		private string _value;
+
+		public string Value
+		{
+			get  =>  $"This is {((IsVisibleInXml)?"":"in")}visible";
+			set => _value = value;
+		}
+
+		/// <summary>
+		/// This is invisible by default
+		/// </summary>
+		public bool IsVisibleInXml { get; set; } = false;
+
+		public bool CustomShouldSerializeMethod()
+		{
+			return IsVisibleInXml;
+		}
+	}
+
+	public class ShouldSerializeInCollectionTest
+	{
+		public ShouldSerializeInCollectionTest()
+		{
+			Collection = new List<ShouldSerializeInvisibleTest>();
+			Collection.Add(new ShouldSerializeInvisibleTest());
+			Collection.Add(new ShouldSerializeInvisibleTest() {IsVisibleInXml = true});
+			Collection.Add(new ShouldSerializeInvisibleTest());
+			Collection.Add(new ShouldSerializeInvisibleTest() {IsVisibleInXml = true});
+		}
+		
+		public List<ShouldSerializeInvisibleTest> Collection { get; set; }
+	}
+
+	[ContentProperty(nameof(Items))]
+	public class CollectionAssignnmentTest
+	{
+		List<TestClass4> items = new List<TestClass4>();
+
+		public bool Assigned { get; private set; }
+
+		public List<TestClass4> Items
+		{
+			get => items;
+			set { items = value; Assigned = true; }
+		}
+	}
+	
+	[RuntimeNameProperty("TheName")]
+	public class TestClass5WithName : TestClass5
+	{
+		[sc.DefaultValue(null)]
+		public string TheName { get; set; }
+
+		[sc.DefaultValue(null)]
+		public TestClass5WithName Other { get; set; }
+	}
+
 	public class TestClassBase
 	{
 
@@ -553,6 +730,105 @@ namespace MonoTests.Portable.Xaml
 		{
 			return Foo;
 		}
+	}
+
+	[TypeConverter(typeof(StringConverter))]
+	public class MyExtension8 : MarkupExtension
+	{
+		public MyExtension8()
+		{
+		}
+
+		public MyExtension8(string arg1)
+		{
+			Foo = arg1;
+		}
+
+		[ConstructorArgument("arg1")]
+		public string Foo { get; set; }
+
+		[ConstructorArgument("arg2")]
+		public Type Bar { get; set; }
+
+		public override object ProvideValue(IServiceProvider provider)
+		{
+			return "provided_value";
+		}
+	}
+
+	/// <summary>
+	/// Returns first ambient value matching provided key.
+	/// </summary>
+	public class AmbientValueExtension : MarkupExtension
+	{
+		public AmbientValueExtension()
+		{
+		}
+		public AmbientValueExtension(string resourceKey)
+		{
+			ResourceKey = resourceKey;
+		}
+
+		public string ResourceKey { get; set; }
+
+		public override object ProvideValue(IServiceProvider sp)
+		{
+			var schemaContext = (sp.GetService(typeof(IXamlSchemaContextProvider)) as IXamlSchemaContextProvider).SchemaContext;
+			var ambientProvider = (IAmbientProvider)sp.GetService(typeof(IAmbientProvider));
+			var resourceProviderType = schemaContext.GetXamlType(typeof(AmbientResourceProvider));
+			var ambientValues = ambientProvider.GetAllAmbientValues(resourceProviderType);
+			foreach (var resourceProvider in ambientValues.OfType<AmbientResourceProvider>())
+			{
+				if (resourceProvider.Resources.TryGetValue(ResourceKey, out var value))
+				{
+					return value;
+				}
+			}
+			throw new KeyNotFoundException("Resource not found");
+		}
+	}
+
+	/// <summary>
+	/// Simple implementation of <see cref="IAmbientProvider"/>'s single method
+	/// <see cref="IAmbientProvider.GetAllAmbientValues(XamlType[])"/> (others throw).
+	/// The method returns <see cref="Values"/>.
+	/// </summary>
+	public class SimpleAmbientProvider : IAmbientProvider
+	{
+		public IEnumerable<object> Values { get; set; }
+
+		public IEnumerable<object> GetAllAmbientValues(params XamlType[] types)
+		{
+			return Values;
+		}
+
+		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties) => throw new NotImplementedException();
+
+		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties) => throw new NotImplementedException();
+
+		public object GetFirstAmbientValue(params XamlType[] types) => throw new NotImplementedException();
+
+		public AmbientPropertyValue GetFirstAmbientValue(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties) => throw new NotImplementedException();
+	}
+
+	/// <summary>
+	/// Ambient Resource dictionary container.
+	/// </summary>
+	[Ambient]
+	[ContentProperty(nameof(Content))]
+	public class AmbientResourceProvider
+	{
+		public Dictionary<string, object> Resources { get; } = new Dictionary<string, object>();
+
+		public object Content { get; set; }
+	}
+
+	/// <summary>
+	/// Wrapper of a single object-type property to allow ambient resource binding.
+	/// </summary>
+	public class AmbientResourceWrapper
+	{
+		public object Foo { get; set; }
 	}
 
 	public class PositionalParametersClass1 : MarkupExtension
@@ -1012,6 +1288,30 @@ namespace MonoTests.Portable.Xaml
 		}
 	}
 
+	public class Attached4
+	{
+		internal List<TestClass4> Property { get; set;  } = new List<TestClass4>();
+	}
+
+	public class AttachedWrapper4
+	{
+		public static List<TestClass4> GetSomeCollection(Attached4 attached)
+		{
+			return attached.Property;
+		}
+	}
+	public class AttachedWrapper5
+	{
+		public static List<TestClass4> GetSomeCollection(Attached4 attached)
+		{
+			return attached.Property;
+		}
+		public static void SetSomeCollection(Attached4 attached, List<TestClass4> value)
+		{
+			attached.Property = value;
+		}
+	}
+
 	public class CustomEventArgs : EventArgs
 	{
 	}
@@ -1031,8 +1331,9 @@ namespace MonoTests.Portable.Xaml
 				Event1(this, EventArgs.Empty);
 			if (Event2 != null)
 				return Event2();
-			else
-				return null;
+			if (Event3 != null)
+				Event3(this, new CustomEventArgs());
+			return null;
 		}
 
 		public void Method1()
@@ -1259,11 +1560,14 @@ namespace MonoTests.Portable.Xaml
 			var text = item as string;
 			if (text != null)
 				Add(new CollectionItem { Name = text });
-			var other = item as OtherItem;
-			if (other != null)
-				Add(other.CollectionItem);
 			else
-				Add((CollectionItem)item);
+			{
+				var other = item as OtherItem;
+				if (other != null)
+					Add(other.CollectionItem);
+				else
+					Add((CollectionItem)item);
+			}
 			return Count - 1;
 		}
 	}
@@ -1324,8 +1628,23 @@ namespace MonoTests.Portable.Xaml
 		{
 			throw new NotImplementedException();
 		}
-	}
+	}	
+	
+	public class TestDeferredLoader<T> : XamlDeferringLoader
+	{
+		public override object Load(XamlReader xamlReader, IServiceProvider serviceProvider)
+		{
+			var list = new XamlNodeList(xamlReader.SchemaContext);
+			XamlServices.Transform(xamlReader, list.Writer);
 
+			return new Func<T>(() => (T)XamlServices.Load(list.GetReader()));
+		}
+
+		public override XamlReader Save(object value, IServiceProvider serviceProvider)
+		{
+			throw new NotImplementedException();
+		}
+	}
 
 	public class DeferredLoadingChild
 	{
@@ -1348,6 +1667,13 @@ namespace MonoTests.Portable.Xaml
 	{
 		[XamlDeferLoad(typeof(TestDeferredLoader), typeof(DeferredLoadingChild))]
 		public DeferredLoadingChild Child { get; set; }
+	}	
+	
+	[ContentProperty("Child")]
+	public class DeferredLoadingContainerMember2
+	{
+		[XamlDeferLoad(typeof(TestDeferredLoader<TestClass4>), typeof(TestClass4))]
+		public Func<TestClass4> Child { get; set; }
 	}
 
 	[ContentProperty("Item")]
@@ -1544,6 +1870,54 @@ namespace MonoTests.Portable.Xaml
 		public int IntValue { get; set; }
 
 		public long LongValue { get; set; }
+	}
+
+	public class TestObjectWithShouldSerialize
+	{
+		public string Text { get; set; }
+
+		internal int ShouldSerializeCalled { get; set; }
+
+		bool ShouldSerializeText()
+		{
+			ShouldSerializeCalled++;
+			return !string.IsNullOrEmpty(Text) && Text != "bar";
+		}
+	}
+
+	[ContentProperty("Child")]
+	public class Whitespace
+	{
+		public string TabConvertedToSpaces { get; set; }
+		public string NewlineConvertedToSpaces { get; set; }
+		public string ConsecutiveSpaces { get; set; }
+		public string SpacesAroundTags { get; set; }
+		public string Preserve { get; set; }
+		public WhitespaceChild Child { get; set; }
+	}
+
+	[ContentProperty("Content")]
+	public class WhitespaceChild
+	{
+		public string Content { get; set; }
+	}
+
+	public class CommandContainer
+	{
+		public ICommand Command1 { get; set; }
+		public ICommand Command2 { get; set; }
+	}
+
+	[ContentProperty("Items")]
+	public class DictionaryContainer
+	{
+		public Dictionary<object, DictionaryItem> Items { get; } = new Dictionary<object, DictionaryItem>();
+	}
+
+	[DictionaryKeyProperty("Key")]
+	public class DictionaryItem
+	{
+		public object Key { get; set; }
 	}
 }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Reflection;
 
@@ -13,8 +13,12 @@ namespace MonoTests.Portable.Xaml
 		public const string Version = "core";
 #elif WINDOWS_UWP
 		public const string Version = "uwp";
-#elif NETSTANDARD
-		public const string Version = "netstandard";
+#elif NETSTANDARD1_0
+		public const string Version = "netstandard10";
+#elif NETSTANDARD1_3
+		public const string Version = "netstandard13";
+#elif NETSTANDARD2_0
+		public const string Version = "netstandard20";
 #elif PCL136
 		public const string Version = "pcl136";
 #elif PCL259
@@ -31,10 +35,20 @@ namespace MonoTests.Portable.Xaml
 		public static bool IsPortableXaml = false;
 #endif
 
-		public const string TestAssemblyName = "Portable.Xaml_test_" + Version;
+		public const string TestAssemblyName = Namespace + "_test_" + Version;
 
 		public const string TestAssemblyNamespace = "clr-namespace:MonoTests.Portable.Xaml;assembly=" + TestAssemblyName;
 
+#if NETSTANDARD 		
+#if HAS_ISUPPORT_INITIALIZE
+		public const bool HasISupportInitializeInterface = true;
+#else
+		public const bool HasISupportInitializeInterface = false;
+#endif
+#else
+		public const bool HasISupportInitializeInterface = true;
+#endif	
+		
 
 		public static string Fixup(this string str)
 		{
@@ -61,7 +75,10 @@ namespace MonoTests.Portable.Xaml
 
 		public static string UpdateXml(this string str)
 		{
-			return str.Replace("net_4_0", Compat.Version)
+			return str
+				.Replace("assembly=Portable.Xaml_test_net_4_5", $"assembly={TestAssemblyName}")
+				.Replace("assembly=Portable.Xaml_test_net_4_0", $"assembly={TestAssemblyName}")
+				.Replace("net_4_0", Compat.Version)
 				.Replace("net_4_5", Compat.Version)
 				.Replace("clr-namespace:Portable.Xaml;assembly=Portable.Xaml", $"clr-namespace:{Compat.Namespace};assembly={Compat.Namespace}")
 				.Replace($" px:", $" {Compat.Prefix}:")

@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -26,9 +26,53 @@ using Portable.Xaml.ComponentModel;
 using System.Reflection;
 using System.Linq;
 using System.ComponentModel;
+using System.Globalization;
 
 namespace Portable.Xaml.Schema
 {
+#if !HAS_TYPE_CONVERTER
+	class XamlTypeValueConverter : XamlValueConverter<TypeConverter>
+	{
+		public XamlTypeValueConverter(Type converterType, XamlType targetType)
+			: base(converterType, targetType)
+		{
+		}
+
+		public XamlTypeValueConverter(Type converterType, XamlType targetType, string name)
+			: base(converterType, targetType, name)
+		{
+		}
+
+		protected override TypeConverter CreateInstance()
+		{
+			if (ConverterType == null)
+				return null;
+
+			var converterTypeInfo = ConverterType.GetTypeInfo();
+
+			if (!typeof(TypeConverter).GetTypeInfo().IsAssignableFrom(converterTypeInfo)
+				&& !ReflectionHelpers.TypeConverterType.GetTypeInfo().IsAssignableFrom(converterTypeInfo))
+				throw new XamlSchemaException($"ConverterType '{ConverterType}' is not derived from '{typeof(TypeConverter)}' or '{ReflectionHelpers.TypeConverterType}'");
+
+			object instance = null;
+			if (converterTypeInfo.GetConstructors().Any(r => r.GetParameters().Length == 0))
+				instance = Activator.CreateInstance(ConverterType);
+
+			if (converterTypeInfo.GetConstructors().Any(r => r.GetParameters().Length == 1 && r.GetParameters()[0].ParameterType == typeof(Type)))
+				instance = Activator.CreateInstance(ConverterType, TargetType.UnderlyingType);
+
+			if (ReferenceEquals(instance, null))
+				return null;
+
+			var tc = instance as TypeConverter;
+			if (tc != null)
+				return tc;
+
+			return new SystemTypeConverter(instance);
+		}
+	}
+#endif
+
 	public class XamlValueConverter<TConverterBase> : IEquatable<XamlValueConverter<TConverterBase>>
 		where TConverterBase : class
 	{
@@ -46,7 +90,6 @@ namespace Portable.Xaml.Schema
 			Name = name;
 		}
 
-		internal TConverterBase InitialConverterInstance { get; set; }
 		TConverterBase converter_instance;
 		public TConverterBase ConverterInstance
 		{
@@ -55,6 +98,10 @@ namespace Portable.Xaml.Schema
 				if (converter_instance == null)
 					converter_instance = CreateInstance();
 				return converter_instance;
+			}
+			internal set
+			{
+				converter_instance = value;
 			}
 		}
 		public Type ConverterType { get; private set; }
@@ -85,13 +132,11 @@ namespace Portable.Xaml.Schema
 
 		protected virtual TConverterBase CreateInstance ()
 		{
-			if (InitialConverterInstance != null)
-				return InitialConverterInstance;
 			if (ConverterType == null)
 				return null;
 
-			if (!typeof (TConverterBase).GetTypeInfo().IsAssignableFrom (ConverterType.GetTypeInfo()))
-				throw new XamlSchemaException (String.Format ("ConverterType '{0}' is not derived from '{1}' type", ConverterType, typeof (TConverterBase)));
+			if (!typeof(TConverterBase).GetTypeInfo().IsAssignableFrom(ConverterType.GetTypeInfo()))
+				throw new XamlSchemaException(String.Format("ConverterType '{0}' is not derived from '{1}' type", ConverterType, typeof(TConverterBase)));
 
 			if (ConverterType.GetTypeInfo().GetConstructors().Any(r => r.GetParameters().Length == 0))
 				return (TConverterBase) Activator.CreateInstance (ConverterType);

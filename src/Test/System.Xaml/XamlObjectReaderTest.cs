@@ -1,4 +1,4 @@
-﻿//
+﻿﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -367,7 +367,9 @@ namespace MonoTests.Portable.Xaml
 		{
 			var obj = Guid.NewGuid ();
 			var r = new XamlObjectReader (obj);
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (r.SchemaContext.GetXamlType (typeof(Guid)).TypeConverter, "premise#1");
+#endif
 			Read_CommonClrType (r, obj);
 			Assert.AreEqual (obj.ToString (), Read_Initialization (r, null), "#1");
 		}
@@ -848,6 +850,58 @@ namespace MonoTests.Portable.Xaml
 			var obj = new TestClassPropertyInternal();
 			obj.Bar = new TestClassInternal();
 			Assert.Throws<XamlObjectReaderException> (() => { var xr = new XamlObjectReader (obj); });
+		}
+
+		[Test]
+		public void Read_NamedItemWithEmptyString()
+		{
+			var obj = new NamedItem("");
+			var ctx = new XamlSchemaContext();
+			var xr = new XamlObjectReader(obj, ctx);
+			ReadNamespace(xr, "", Compat.TestAssemblyNamespace, "ns1");
+
+			ReadObject(xr, ctx.GetXamlType(typeof(NamedItem)), "#1", xt =>
+			{
+				ReadMember(xr, xt.GetMember("ItemName"), "#2", xm =>
+				{
+					ReadValue(xr, string.Empty, "#3");
+				});
+			});
+		}
+
+		[Test]
+		public void Read_ObjectWithShouldSerialize()
+		{
+			var obj = new TestObjectWithShouldSerialize { Text = "hello" };
+			var ctx = new XamlSchemaContext();
+			var xr = new XamlObjectReader(obj, ctx);
+			ReadNamespace(xr, "", Compat.TestAssemblyNamespace, "ns1");
+
+			ReadObject(xr, ctx.GetXamlType(typeof(TestObjectWithShouldSerialize)), "#1", xt =>
+			{
+				ReadMember(xr, xt.GetMember("Text"), "#2", xm =>
+				{
+					ReadValue(xr, "hello", "#3");
+				});
+			});
+			Assert.IsFalse(xr.Read());
+			Assert.IsTrue(obj.ShouldSerializeCalled > 0);
+		}
+
+		[Test]
+		public void Read_ObjectWithShouldSerialize2()
+		{
+			var obj = new TestObjectWithShouldSerialize { Text = "bar" };
+			var ctx = new XamlSchemaContext();
+			var xr = new XamlObjectReader(obj, ctx);
+			ReadNamespace(xr, "", Compat.TestAssemblyNamespace, "ns1");
+
+			ReadObject(xr, ctx.GetXamlType(typeof(TestObjectWithShouldSerialize)), "#1", xt =>
+			{
+				// no members
+			});
+			Assert.IsFalse(xr.Read());
+			Assert.IsTrue(obj.ShouldSerializeCalled > 0);
 		}
 	}
 }

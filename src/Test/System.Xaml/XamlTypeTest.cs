@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -40,7 +40,6 @@ using System.Xaml.Schema;
 
 using CategoryAttribute = NUnit.Framework.CategoryAttribute;
 #if NETSTANDARD
-using ISupportInitialize = Portable.Xaml.ComponentModel.ISupportInitialize;
 using System.ComponentModel;
 #endif
 
@@ -345,8 +344,10 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (t.TypeConverter, "#25");
 			Assert.IsTrue (t.TypeConverter.ConverterInstance is Int32Converter, "#25-2");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -383,7 +384,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (t.TypeConverter, "#25"); // TypeTypeConverter
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -420,7 +423,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -457,7 +462,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -507,7 +514,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsTrue (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNotNull (t.ContentProperty, "#27");
 			Assert.AreEqual ("Name", t.ContentProperty.Name, "#27-2");
@@ -544,7 +553,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			// Assert.IsNull (t.DeferringLoader, "#28");
@@ -558,6 +569,7 @@ namespace MonoTests.Portable.Xaml
 				Assert.IsTrue (Array.IndexOf (names, member.Name) >= 0, "#32");
 		}
 
+#if HAS_TYPE_CONVERTER
 		[Test]
 		public void TypeConverter ()
 		{
@@ -571,7 +583,7 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsNull (new XamlType (typeof (XamlType), sctx).TypeConverter, "#5");
 			Assert.IsTrue (new XamlType (typeof (char), sctx).TypeConverter.ConverterInstance is CharConverter, "#6");
 		}
-		
+				
 		[Test]
 		public void TypeConverter_Type ()
 		{
@@ -604,6 +616,8 @@ namespace MonoTests.Portable.Xaml
 			} catch (NotSupportedException) {
 			}
 		}
+
+#endif
 
 		[Test]
 		public void GetXamlNamespaces ()
@@ -848,7 +862,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (xt.IsNullable, "#2");
 			Assert.IsFalse (xt.IsUnknown, "#3");
 			Assert.IsFalse (xt.IsUsableDuringInitialization, "#4");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (xt.TypeConverter, "#5");
+#endif
 		}
 
 		[Test]
@@ -884,8 +900,10 @@ namespace MonoTests.Portable.Xaml
 			Assert.AreEqual ("clr-namespace:System;assembly=mscorlib", xm.Type.PreferredXamlNamespace, "#5");
 			Assert.AreEqual (1, xm.Type.TypeArguments.Count, "#6");
 			Assert.AreEqual (XamlLanguage.Int32, xm.Type.TypeArguments [0], "#7");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (xm.Type.TypeConverter, "#8");
 			Assert.IsNotNull (xm.Type.TypeConverter.ConverterInstance, "#9");
+#endif
 
 			var obj = new NullableContainer ();
 			xm.Invoker.SetValue (obj, 5);
@@ -911,10 +929,31 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsTrue(xt.IsNullable, "#1");
 			Assert.AreEqual(xt.BaseType, sctx.GetXamlType(typeof(ValueType)), "#2");
 			Assert.IsNull(xt.ValueSerializer, "#3");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotInstanceOf<System.ComponentModel.DateTimeConverter>(xt.TypeConverter.ConverterInstance, "#4");
 #if PCL
-			Assert.IsInstanceOf<global::Portable.Xaml.ComponentModel.DateTimeConverter>(xt.TypeConverter.ConverterInstance, "#4");
+			Assert.IsInstanceOf(typeof(global::Portable.Xaml.XamlSchemaContext).Assembly.GetType("Portable.Xaml.ComponentModel.PortableXamlDateTimeConverter"), xt.TypeConverter.ConverterInstance, "#4");
 #endif
+#endif
+		}
+
+		[Test]
+		public void BaseClassPropertiesShouldHaveProperNamespaces()
+		{
+			var xtnamebase = sctx.GetXamlType(typeof(TestClass5WithName));
+			var xtderived = sctx.GetXamlType(typeof(NamespaceTest2.TestClassWithDifferentBaseNamespace));
+			Assert.IsNotNull(xtderived);
+			var xmname = xtderived.GetMember("TheName");
+			Assert.IsNotNull(xmname);
+			Assert.AreSame(xtnamebase, xmname.TargetType);
+			Assert.AreSame(xtnamebase, xmname.DeclaringType);
+			// note that the preferred namespace of the name member does not reflect the type we got the 
+			// member from, but the type it is declared on.
+			Assert.AreEqual(xtnamebase.PreferredXamlNamespace, xmname.PreferredXamlNamespace);
+
+			Assert.AreSame(xmname, xtderived.GetAliasedProperty(XamlLanguage.Name));
+			// not important: Assert.AreNotSame(xmname, xtnamebase.GetAliasedProperty(XamlLanguage.Name));
+			Assert.AreEqual(xmname, xtnamebase.GetAliasedProperty(XamlLanguage.Name));
 		}
 	}
 
