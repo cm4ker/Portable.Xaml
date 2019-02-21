@@ -1,4 +1,4 @@
-//
+﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -26,10 +26,14 @@ using System.Collections.Generic;
 using Portable.Xaml.ComponentModel;
 using System.Globalization;
 using Portable.Xaml;
+using System.ComponentModel;
 
 namespace Portable.Xaml.Markup
 {
-	public class NameReferenceConverter : TypeConverter
+#if HAS_TYPE_CONVERTER
+	public
+#endif
+	class NameReferenceConverter : TypeConverter
 	{
 		public override bool CanConvertFrom (ITypeDescriptorContext context, Type sourceType)
 		{

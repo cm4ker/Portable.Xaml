@@ -1,4 +1,4 @@
-//
+﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -29,79 +29,85 @@ using System.Linq;
 using System.Reflection;
 using Portable.Xaml;
 using Portable.Xaml.Schema;
+using System.ComponentModel;
 
 namespace Portable.Xaml.Markup
 {
 	//[System.Runtime.CompilerServices.TypeForwardedFrom (Consts.AssemblyWindowsBase)]
 	public abstract class ValueSerializer
 	{
-		public static ValueSerializer GetSerializerFor (PropertyInfo descriptor)
+		public static ValueSerializer GetSerializerFor(PropertyInfo descriptor)
 		{
-			return GetSerializerFor (descriptor, null);
+			return GetSerializerFor(descriptor, null);
 		}
 
-		public static ValueSerializer GetSerializerFor (Type type)
+		public static ValueSerializer GetSerializerFor(Type type)
 		{
-			return GetSerializerFor (type, null);
+			return GetSerializerFor(type, null);
 		}
 
 		// untested
-		public static ValueSerializer GetSerializerFor (PropertyInfo descriptor, IValueSerializerContext context)
+		public static ValueSerializer GetSerializerFor(PropertyInfo descriptor, IValueSerializerContext context)
 		{
 			if (descriptor == null)
-				throw new ArgumentNullException ("descriptor");
+				throw new ArgumentNullException("descriptor");
 			if (context != null)
-				return context.GetValueSerializerFor (descriptor);
+				return context.GetValueSerializerFor(descriptor);
 
-			var typeConverterInfo = descriptor.GetCustomAttribute<TypeConverterAttribute> ();
-			var typeConverterName = typeConverterInfo?.ConverterTypeName;
-			if (string.IsNullOrEmpty (typeConverterName))
-				return null;
-			var tcType = Type.GetType(typeConverterName);
-			var tc = Activator.CreateInstance (tcType) as TypeConverter;
-			if (tc != null && tc.GetType () != typeof (TypeConverter))
-				return new TypeConverterValueSerializer (tc);
+			var tc = descriptor.GetTypeConverter();
+			if (tc != null && !tc.IsBaseTypeConverter())
+				return new TypeConverterValueSerializer(tc);
 			return null;
 		}
 
-		public static ValueSerializer GetSerializerFor (Type type, IValueSerializerContext context)
+		public static ValueSerializer GetSerializerFor(Type type, IValueSerializerContext context)
 		{
 			if (type == null)
-				throw new ArgumentNullException ("type");
+				throw new ArgumentNullException("type");
 			if (context != null)
-				return context.GetValueSerializerFor (type);
+				return context.GetValueSerializerFor(type);
 
 			// Standard MarkupExtensions are serialized without ValueSerializer.
-			if (typeof (MarkupExtension).GetTypeInfo().IsAssignableFrom (type.GetTypeInfo()) && XamlLanguage.AllTypes.Any (x => x.UnderlyingType == type))
+			if (typeof(MarkupExtension).GetTypeInfo().IsAssignableFrom(type.GetTypeInfo()) && XamlLanguage.AllTypes.Any(x => x.UnderlyingType == type))
 				return null;
 
-			// DateTime is documented as special.
-			if (type == typeof (DateTime))
-				return new DateTimeValueSerializer ();
-			// String too.
-			if (type == typeof (string))
-				return new StringValueSerializer ();
+			type = Nullable.GetUnderlyingType(type) ?? type;
 
-			// FIXME: this is hack. The complete condition is fully documented at http://msdn.microsoft.com/en-us/library/ms590363.aspx
-			if (type.GetTypeInfo().GetCustomAttribute<TypeConverterAttribute> (true) != null) {
-				var tc = type.GetTypeConverter ();
-				if (tc != null && tc.GetType () != typeof (TypeConverter))
-					return new TypeConverterValueSerializer (tc);
-			}
+			// DateTime is documented as special.
+			if (type == typeof(DateTime) || type == typeof(DateTime?))
+				return new DateTimeValueSerializer();
+			
+			// String too.
+			if (type == typeof(string))
+				return new StringValueSerializer();
 
 			// Undocumented, but System.Type seems also special. While other MarkupExtension returned types are not handled specially, this method returns a valid instance for System.Type. Note that it doesn't for TypeExtension.
-			if (type == typeof (Type))
+			if (type == typeof(Type))
 				// Since System.Type does not have a valid TypeConverter, I use TypeExtensionConverter (may sound funny considering the above notes!) for this serializer.
-				return new TypeValueSerializer ();
+				return new TypeValueSerializer();
+
+			if (type == typeof(Array))
+				return null;
+
+			// FIXME: this is hack. The complete condition is fully documented at http://msdn.microsoft.com/en-us/library/ms590363.aspx
+			if (type.GetTypeInfo().GetTypeConverterName(true) != null)
+			{
+				var tc = type.GetTypeConverter();
+				if (tc != null && !tc.IsBaseTypeConverter())
+					return new TypeConverterValueSerializer(tc);
+			}
 
 			// Undocumented, but several primitive types get a valid serializer while it does not have TypeConverter.
 			// There is still exceptional type! TimeSpan. Why aren't they documented?
 			if (type != typeof(object) || type == typeof(TimeSpan))
 			{
 				var typeConverter = type.GetTypeConverter ();
-				if (typeConverter != null)
+				if (typeConverter != null && !typeConverter.IsBaseTypeConverter())
 					return new TypeConverterValueSerializer (typeConverter);
 			}
+
+			if (type == typeof(Uri))
+				return new TypeConverterValueSerializer(new Portable.Xaml.ComponentModel.UriTypeConverter());
 			return null;
 		}
 
@@ -198,7 +204,7 @@ namespace Portable.Xaml.Markup
 
 		public override string ConvertToString (object value,     IValueSerializerContext context)
 		{
-			return (string) txc.ConvertTo (context, CultureInfo.InvariantCulture, value, typeof (string));
+			return (string) txc.ConvertTo ((ITypeDescriptorContext)context, CultureInfo.InvariantCulture, value, typeof (string));
 		}
 
 		public override IEnumerable<Type> TypeReferences (object value, IValueSerializerContext context)
@@ -218,22 +224,22 @@ namespace Portable.Xaml.Markup
 
 		public override bool CanConvertFromString (string value, IValueSerializerContext context)
 		{
-			return c.CanConvertFrom (context, typeof (string));
+			return c.CanConvertFrom ((ITypeDescriptorContext)context, typeof (string));
 		}
 
 		public override bool CanConvertToString (object value, IValueSerializerContext context)
 		{
-			return c.CanConvertTo (context, typeof (string));
+			return c.CanConvertTo ((ITypeDescriptorContext)context, typeof (string));
 		}
 
 		public override object ConvertFromString (string value, IValueSerializerContext context)
 		{
-			return c.ConvertFrom (context, CultureInfo.InvariantCulture, value);
+			return c.ConvertFrom ((ITypeDescriptorContext)context, CultureInfo.InvariantCulture, value);
 		}
 
 		public override string ConvertToString (object value,     IValueSerializerContext context)
 		{
-			return value == null ? String.Empty : (string) c.ConvertTo (context, CultureInfo.InvariantCulture, value, typeof (string));
+			return value == null ? String.Empty : (string) c.ConvertTo ((ITypeDescriptorContext)context, CultureInfo.InvariantCulture, value, typeof (string));
 		}
 
 		public override IEnumerable<Type> TypeReferences (object value, IValueSerializerContext context)

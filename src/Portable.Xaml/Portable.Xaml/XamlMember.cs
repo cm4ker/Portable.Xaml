@@ -50,6 +50,8 @@ namespace Portable.Xaml
 			public const int IsAttachable = 1 << 9;
 			public const int IsDefaultEvent = 1 << 10;
 			public const int IsDirective = 1 << 11;
+			public const int ShouldSerialize = 1 << 12;
+			public const int RequiresChildNode = 1 << 13;
 		}
 		XamlType target_type;
 		MemberInfo underlying_member;
@@ -63,6 +65,7 @@ namespace Portable.Xaml
 		ReferenceValue<XamlValueConverter<ValueSerializer>> valueSerializer;
 		ReferenceValue<ICustomAttributeProvider> customAttributeProvider;
 		ReferenceValue<XamlValueConverter<XamlDeferringLoader>> deferringLoader;
+		ReferenceValue<MethodInfo> shouldSerializeMethod;
 
 		internal XamlSchemaContext SchemaContext => context; // should we expose this as public?
 
@@ -177,6 +180,15 @@ namespace Portable.Xaml
 			flags.Set(MemberFlags.IsAttachable, isAttachable);
 		}
 
+		internal XamlMember(string name, string preferredNamespace)
+		{
+			if (name == null)
+				throw new ArgumentNullException("name");
+			Name = name;
+			flags.Set(MemberFlags.IsUnknown, true);
+			ns.Set(preferredNamespace);
+		}
+
 		XamlMember(XamlSchemaContext schemaContext, XamlMemberInvoker invoker)
 		{
 			if (schemaContext == null)
@@ -202,15 +214,56 @@ namespace Portable.Xaml
 
 		public string PreferredXamlNamespace => ns.HasValue ? ns.Value : ns.Set(DeclaringType?.PreferredXamlNamespace);
 
-#if !PCL
-		public DesignerSerializationVisibility SerializationVisibility {
-			get {
-				var c= GetCustomAttributeProvider ();
-				var a = c == null ? null : c.GetCustomAttribute<DesignerSerializationVisibilityAttribute> (false);
+#if !PCL || NETSTANDARD
+		public DesignerSerializationVisibility SerializationVisibility
+		{
+			get
+			{
+				var c = this.CustomAttributeProvider;
+				var a = c == null ? null : c.GetCustomAttribute<DesignerSerializationVisibilityAttribute>(false);
 				return a != null ? a.Visibility : DesignerSerializationVisibility.Visible;
 			}
 		}
 #endif
+
+		internal bool ShouldSerialize(object instance)
+		{
+			var shouldSerialize = flags.Get(MemberFlags.ShouldSerialize) ?? flags.Set(MemberFlags.ShouldSerialize, LookupShouldSerialize());
+
+			if (!shouldSerialize)
+				return false;
+
+			if (!shouldSerializeMethod.HasValue)
+				shouldSerializeMethod.Set(LookupShouldSerializeMethod());
+
+			if (shouldSerializeMethod.Value != null)
+			{
+				return (bool)shouldSerializeMethod.Value.Invoke(instance, null);
+			}
+
+			return true;
+		}
+
+		MethodInfo LookupShouldSerializeMethod()
+		{
+			foreach (var method in DeclaringType.UnderlyingType?.GetTypeInfo().GetDeclaredMethods("ShouldSerialize" + Name))
+			{
+				if (method.GetParameters().Length == 0 && method.ReturnType == typeof(bool))
+				{
+					return method;
+				}
+			}
+			return null;
+		}
+
+		bool LookupShouldSerialize()
+		{
+			bool shouldSerialize = true;
+#if !PCL || NETSTANDARD
+			shouldSerialize &= SerializationVisibility != DesignerSerializationVisibility.Hidden;
+#endif
+			return shouldSerialize;
+		}
 
 		public bool IsAttachable => flags.Get(MemberFlags.IsAttachable) ?? false;
 
@@ -244,7 +297,12 @@ namespace Portable.Xaml
 
 		public XamlType Type => type.HasValue ? type.Value : type.Set(LookupType());
 
-		public XamlValueConverter<TypeConverter> TypeConverter => typeConverter.HasValue ? typeConverter.Value : typeConverter.Set(LookupTypeConverter());
+#if HAS_TYPE_CONVERTER
+		public
+#else
+		internal
+#endif
+		XamlValueConverter<TypeConverter> TypeConverter => typeConverter.HasValue ? typeConverter.Value : typeConverter.Set(LookupTypeConverter());
 
 		public MemberInfo UnderlyingMember => underlying_member ?? (underlying_member = LookupUnderlyingMember());
 
@@ -266,6 +324,16 @@ namespace Portable.Xaml
 			return Equals(x);
 		}
 
+		bool MemberEquals(MemberInfo member1, MemberInfo member2)
+		{
+			if (ReferenceEquals(member1, null))
+				return ReferenceEquals(member2, null);
+			return !ReferenceEquals(member2, null)
+				&& member1.DeclaringType == member2.DeclaringType
+				&& string.Equals(member1.Name, member2.Name, StringComparison.Ordinal);
+		}
+
+
 		public bool Equals(XamlMember other)
 		{
 			// this should be in general correct; XamlMembers are almost not comparable.
@@ -273,9 +341,9 @@ namespace Portable.Xaml
 				return true;
 			// It does not compare XamlSchemaContext.
 			return !ReferenceEquals(other, null) &&
-				underlying_member == other.underlying_member &&
-				underlying_getter == other.underlying_getter &&
-				underlying_setter == other.underlying_setter &&
+				MemberEquals(underlying_member, other.underlying_member) &&
+				MemberEquals(underlying_getter, other.underlying_getter) &&
+				MemberEquals(underlying_setter, other.underlying_setter) &&
 				Name == other.Name &&
 				PreferredXamlNamespace == other.PreferredXamlNamespace &&
 				ns == other.ns &&
@@ -306,7 +374,7 @@ namespace Portable.Xaml
 					return String.Concat(DeclaringType.UnderlyingType.FullName, ".", Name);
 			}
 			else
-				return String.Concat("{", PreferredXamlNamespace, "}", DeclaringType.Name, ".", Name);
+				return String.Concat("{", PreferredXamlNamespace, "}", DeclaringType?.Name, ".", Name);
 		}
 
 		public virtual IList<string> GetXamlNamespaces()
@@ -320,7 +388,10 @@ namespace Portable.Xaml
 
 		internal ICustomAttributeProvider CustomAttributeProvider => customAttributeProvider.HasValue ? customAttributeProvider.Value : customAttributeProvider.Set(LookupCustomAttributeProvider());
 
-		protected virtual ICustomAttributeProvider LookupCustomAttributeProvider()
+#if HAS_CUSTOM_ATTRIBUTE_PROVIDER
+		protected
+#endif
+		internal virtual ICustomAttributeProvider LookupCustomAttributeProvider()
 		{
 			return UnderlyingMember != null ? context.GetCustomAttributeProvider(UnderlyingMember) : null;
 		}
@@ -417,11 +488,21 @@ namespace Portable.Xaml
 			if (UnderlyingSetter != null)
 				return UnderlyingSetter.GetParameters()[1].ParameterType;
 			if (UnderlyingGetter != null)
-				return UnderlyingGetter.GetParameters()[0].ParameterType;
+			{
+				if (IsAttachable)
+					return UnderlyingGetter.ReturnType;
+				else
+					return UnderlyingGetter.GetParameters()[0].ParameterType;
+			}
 			return typeof(object);
 		}
 
-		protected virtual XamlValueConverter<TypeConverter> LookupTypeConverter()
+#if HAS_TYPE_CONVERTER
+		protected
+#else
+		internal
+#endif
+		virtual XamlValueConverter<TypeConverter> LookupTypeConverter()
 		{
 			var t = Type.UnderlyingType;
 			if (t == null)
@@ -429,10 +510,11 @@ namespace Portable.Xaml
 			if (t == typeof(object)) // it is different from XamlType.LookupTypeConverter().
 				return null;
 
-			var a = CustomAttributeProvider;
-			var ca = a != null ? a.GetCustomAttribute<TypeConverterAttribute>(false) : null;
-			if (ca != null)
-				return context.GetValueConverter<TypeConverter>(System.Type.GetType(ca.ConverterTypeName), Type);
+			var converterName = CustomAttributeProvider.GetTypeConverterName(false);
+			if (converterName != null)
+				return context.GetValueConverter<TypeConverter>(System.Type.GetType(converterName), Type);
+			if (IsEvent)
+				return context.GetValueConverter<TypeConverter>(typeof(EventConverter), Type);
 
 			return Type.TypeConverter;
 		}
@@ -485,6 +567,21 @@ namespace Portable.Xaml
 		{
 			var ap = CustomAttributeProvider;
 			return ap != null && ap.GetCustomAttributes(typeof(ConstructorArgumentAttribute), false).Length > 0;
+		}
+
+		internal virtual bool RequiresChildNode => flags.Get(MemberFlags.RequiresChildNode) ?? flags.Set(MemberFlags.RequiresChildNode, LookupRequiresChildNode());
+
+		bool LookupRequiresChildNode()
+		{
+			// if we can convert to & from string, we can write it as an attribute
+			if (DeclaringType?.ContentProperty == this)
+				return true;
+			var canConvert = Type.CanConvertFrom(XamlLanguage.String) && Type.CanConvertTo(XamlLanguage.String);
+			if (IsWritePublic && canConvert)
+				return false;
+			return Type.IsCollection
+				|| Type.IsDictionary 
+				|| (IsWritePublic && !canConvert);
 		}
 	}
 }

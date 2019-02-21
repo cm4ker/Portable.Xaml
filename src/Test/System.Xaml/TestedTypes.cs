@@ -32,12 +32,16 @@ using System.Reflection;
 using System.Xml;
 using System.Xml.Schema;
 using System.Xml.Serialization;
+using System.Windows.Input;
 using NUnit.Framework;
 using sc = System.ComponentModel;
 #if !PCL136
 using System.Collections.Immutable;
 #endif
 
+#if NETSTANDARD || PCL
+using System.ComponentModel;
+#endif
 
 #if PCL
 using Portable.Xaml.Markup;
@@ -53,22 +57,22 @@ using System.Xaml.Schema;
 #endif
 
 [assembly: XmlnsDefinition("http://www.domain.com/path", "XamlTest")]
- // bug #680385
+// bug #680385
 [assembly: XmlnsDefinition("http://www.domain.com/path", "SecondTest")]
- // bug #681045, same xmlns key for different clrns.
+// bug #681045, same xmlns key for different clrns.
 
 [assembly: XmlnsDefinition("http://schemas.example.com/test", "XamarinBug3003")]
- // bug #3003
+// bug #3003
 [assembly: XmlnsPrefix("http://schemas.example.com/test", "test")]
- // bug #3003
+// bug #3003
 
-[assembly:XmlnsDefinition("urn:mono-test", "MonoTests.Portable.Xaml.NamespaceTest")]
-[assembly:XmlnsDefinition("urn:mono-test2", "MonoTests.Portable.Xaml.NamespaceTest2")]
+[assembly: XmlnsDefinition("urn:mono-test", "MonoTests.Portable.Xaml.NamespaceTest")]
+[assembly: XmlnsDefinition("urn:mono-test2", "MonoTests.Portable.Xaml.NamespaceTest2")]
 
 // comment out the following to get mono's System.Xaml to go further in the tests
 [assembly: XmlnsDefinition("urn:bar", "MonoTests.Portable.Xaml.NamespaceTest")]
 
-[assembly:XmlnsCompatibleWith("urn:foo", "urn:bar")]
+[assembly: XmlnsCompatibleWith("urn:foo", "urn:bar")]
 [assembly: XmlnsCompatibleWith("urn:foo2", "urn:bar2")]
 
 namespace MonoTests.Portable.Xaml.NamespaceTest
@@ -76,6 +80,8 @@ namespace MonoTests.Portable.Xaml.NamespaceTest
 	public class NamespaceTestClass
 	{
 		public string Foo { get; set; }
+
+		public string Bar { get; set; }
 	}
 
 	public abstract class AbstractObject
@@ -88,15 +94,50 @@ namespace MonoTests.Portable.Xaml.NamespaceTest
 		public override string Foo { get; set; }
 	}
 
-	[ContentProperty ("Contents")]
+	[ContentProperty("Contents")]
 	public class CustomGenericType<T>
 	{
-		public List<T> Contents { get; } = new List<T> ();
+		public List<T> Contents { get; } = new List<T>();
+	}
+}
+
+namespace MonoTests.Portable.Xaml.NamespaceTest2
+{
+	public class TestClassWithDifferentBaseNamespace : MonoTests.Portable.Xaml.TestClass5WithName
+	{
+		public string SomeOtherProperty { get; set; }
+	}
+
+	public class AttachedWrapperWithDifferentBaseNamespace : AttachedPropertyStore
+	{
+		public AttachedWrapperWithDifferentBaseNamespace()
+		{
+			Value = new Attached();
+		}
+
+		public Attached Value { get; set; }
 	}
 }
 
 namespace MonoTests.Portable.Xaml
 {
+	class MyCommand : ICommand
+	{
+		#pragma warning disable 67
+		public event EventHandler CanExecuteChanged;
+		#pragma warning restore 67
+
+		public bool CanExecute(object parameter) => true;
+
+		public void Execute(object parameter)
+		{
+		}
+	}
+
+	public static class StaticValues
+	{
+		public static ICommand Command => new MyCommand();
+	}
 
 	public class ArgumentAttributed
 	{
@@ -115,9 +156,9 @@ namespace MonoTests.Portable.Xaml
 
 	[ContentProperty("Contents")]
 	public class CustomGenericType<T>
-		where T: struct
+		where T : struct
 	{
-		public List<T> Contents { get; } = new List<T> ();
+		public List<T> Contents { get; } = new List<T>();
 	}
 
 	public class ArgumentNonAttributed
@@ -139,12 +180,12 @@ namespace MonoTests.Portable.Xaml
 
 		public string StringArg { get; private set; }
 
-		public ArgumentMultipleTypes (int arg1)
+		public ArgumentMultipleTypes(int arg1)
 		{
 			IntArg = arg1;
 		}
 
-		public ArgumentMultipleTypes (string arg1)
+		public ArgumentMultipleTypes(string arg1)
 		{
 			StringArg = arg1;
 		}
@@ -155,7 +196,7 @@ namespace MonoTests.Portable.Xaml
 	{
 		public int IntArg { get; private set; }
 
-		public ArgumentWithIntConstructor (int arg1)
+		public ArgumentWithIntConstructor(int arg1)
 		{
 			IntArg = arg1;
 		}
@@ -211,7 +252,7 @@ namespace MonoTests.Portable.Xaml
 	{
 		public string Foo { get; set; }
 	}
-	
+
 	//[MarkupExtensionReturnType (typeof (Array))]
 	//[ContentProperty ("Items")]  ... so, these attributes do not affect XamlObjectReader.
 	public class MyArrayExtension : MarkupExtension
@@ -321,6 +362,11 @@ namespace MonoTests.Portable.Xaml
 
 		public string Baz { internal get; set; }
 
+		public string WriteOnly
+		{
+			set { Baz = value; }
+		}
+
 		public string ReadOnly
 		{
 			get { return Foo; }
@@ -330,6 +376,151 @@ namespace MonoTests.Portable.Xaml
 	public class TestClass6
 	{
 		public DateTime TheDateAndTime { get; set; }
+	}
+
+	public class TestClass7 : ISupportInitialize
+	{
+		public int State { get; set; }
+
+		public void BeginInit()
+		{
+			State++;
+		}
+
+		public void EndInit()
+		{
+			State--;
+		}
+	}
+
+	public class TestClass8
+	{
+		private TestClass9 _bar;
+
+		public TestClass9 Bar
+		{
+			get => _bar;
+			set
+			{
+				// Make sure we don't set this value twice.
+				Assert.IsNull(_bar);
+
+				_bar = value;
+				
+				// The value must be instantiated, but not yet initialized.
+				Assert.IsFalse(_bar.IsInitialized);
+				Assert.IsNull(_bar.Foo);
+			}
+		}
+	}
+
+  	[UsableDuringInitialization(true)]
+	public class TestClass9 : ISupportInitialize
+	{
+		public TestClass7 Foo { get; set; }
+
+		public int Bar { get; set; }
+
+		public string Baz { get; set; }
+
+		public bool IsInitialized { get; private set;}
+
+		/// <inheritdoc />
+		public void BeginInit()
+		{
+			Assert.IsFalse(IsInitialized);
+		}
+
+		/// <inheritdoc />
+		public void EndInit()
+		{
+			Assert.IsFalse(IsInitialized);
+			IsInitialized = true;
+		}
+	}
+
+	[ContentProperty(nameof(Items))]
+	public class TestClass10
+	{
+		public TestClass10()
+		{
+			var collection = new ObservableCollection<TestClass9>();
+			collection.CollectionChanged += (sender, args) =>
+			{
+				foreach (TestClass9 item in args.NewItems)
+				{
+					Assert.IsFalse(item.IsInitialized);
+					Assert.Zero(item.Bar);
+					Assert.IsNull(item.Baz);
+				}
+			};
+
+			Items = collection;
+		}
+
+		public IList<TestClass9> Items { get; }
+	}
+	
+#if PCL
+	[ShouldSerializeAttribute(nameof(CustomShouldSerializeMethod))]
+#endif
+	public class ShouldSerializeInvisibleTest
+	{
+		private string _value;
+
+		public string Value
+		{
+			get  =>  $"This is {((IsVisibleInXml)?"":"in")}visible";
+			set => _value = value;
+		}
+
+		/// <summary>
+		/// This is invisible by default
+		/// </summary>
+		public bool IsVisibleInXml { get; set; } = false;
+
+		public bool CustomShouldSerializeMethod()
+		{
+			return IsVisibleInXml;
+		}
+	}
+
+	public class ShouldSerializeInCollectionTest
+	{
+		public ShouldSerializeInCollectionTest()
+		{
+			Collection = new List<ShouldSerializeInvisibleTest>();
+			Collection.Add(new ShouldSerializeInvisibleTest());
+			Collection.Add(new ShouldSerializeInvisibleTest() {IsVisibleInXml = true});
+			Collection.Add(new ShouldSerializeInvisibleTest());
+			Collection.Add(new ShouldSerializeInvisibleTest() {IsVisibleInXml = true});
+		}
+		
+		public List<ShouldSerializeInvisibleTest> Collection { get; set; }
+	}
+
+	[ContentProperty(nameof(Items))]
+	public class CollectionAssignnmentTest
+	{
+		List<TestClass4> items = new List<TestClass4>();
+
+		public bool Assigned { get; private set; }
+
+		public List<TestClass4> Items
+		{
+			get => items;
+			set { items = value; Assigned = true; }
+		}
+	}
+	
+	[RuntimeNameProperty("TheName")]
+	public class TestClass5WithName : TestClass5
+	{
+		[sc.DefaultValue(null)]
+		public string TheName { get; set; }
+
+		[sc.DefaultValue(null)]
+		public TestClass5WithName Other { get; set; }
 	}
 
 	public class TestClassBase
@@ -541,6 +732,105 @@ namespace MonoTests.Portable.Xaml
 		}
 	}
 
+	[TypeConverter(typeof(StringConverter))]
+	public class MyExtension8 : MarkupExtension
+	{
+		public MyExtension8()
+		{
+		}
+
+		public MyExtension8(string arg1)
+		{
+			Foo = arg1;
+		}
+
+		[ConstructorArgument("arg1")]
+		public string Foo { get; set; }
+
+		[ConstructorArgument("arg2")]
+		public Type Bar { get; set; }
+
+		public override object ProvideValue(IServiceProvider provider)
+		{
+			return "provided_value";
+		}
+	}
+
+	/// <summary>
+	/// Returns first ambient value matching provided key.
+	/// </summary>
+	public class AmbientValueExtension : MarkupExtension
+	{
+		public AmbientValueExtension()
+		{
+		}
+		public AmbientValueExtension(string resourceKey)
+		{
+			ResourceKey = resourceKey;
+		}
+
+		public string ResourceKey { get; set; }
+
+		public override object ProvideValue(IServiceProvider sp)
+		{
+			var schemaContext = (sp.GetService(typeof(IXamlSchemaContextProvider)) as IXamlSchemaContextProvider).SchemaContext;
+			var ambientProvider = (IAmbientProvider)sp.GetService(typeof(IAmbientProvider));
+			var resourceProviderType = schemaContext.GetXamlType(typeof(AmbientResourceProvider));
+			var ambientValues = ambientProvider.GetAllAmbientValues(resourceProviderType);
+			foreach (var resourceProvider in ambientValues.OfType<AmbientResourceProvider>())
+			{
+				if (resourceProvider.Resources.TryGetValue(ResourceKey, out var value))
+				{
+					return value;
+				}
+			}
+			throw new KeyNotFoundException("Resource not found");
+		}
+	}
+
+	/// <summary>
+	/// Simple implementation of <see cref="IAmbientProvider"/>'s single method
+	/// <see cref="IAmbientProvider.GetAllAmbientValues(XamlType[])"/> (others throw).
+	/// The method returns <see cref="Values"/>.
+	/// </summary>
+	public class SimpleAmbientProvider : IAmbientProvider
+	{
+		public IEnumerable<object> Values { get; set; }
+
+		public IEnumerable<object> GetAllAmbientValues(params XamlType[] types)
+		{
+			return Values;
+		}
+
+		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties) => throw new NotImplementedException();
+
+		public IEnumerable<AmbientPropertyValue> GetAllAmbientValues(IEnumerable<XamlType> ceilingTypes, bool searchLiveStackOnly, IEnumerable<XamlType> types, params XamlMember[] properties) => throw new NotImplementedException();
+
+		public object GetFirstAmbientValue(params XamlType[] types) => throw new NotImplementedException();
+
+		public AmbientPropertyValue GetFirstAmbientValue(IEnumerable<XamlType> ceilingTypes, params XamlMember[] properties) => throw new NotImplementedException();
+	}
+
+	/// <summary>
+	/// Ambient Resource dictionary container.
+	/// </summary>
+	[Ambient]
+	[ContentProperty(nameof(Content))]
+	public class AmbientResourceProvider
+	{
+		public Dictionary<string, object> Resources { get; } = new Dictionary<string, object>();
+
+		public object Content { get; set; }
+	}
+
+	/// <summary>
+	/// Wrapper of a single object-type property to allow ambient resource binding.
+	/// </summary>
+	public class AmbientResourceWrapper
+	{
+		public object Foo { get; set; }
+	}
+
 	public class PositionalParametersClass1 : MarkupExtension
 	{
 		public PositionalParametersClass1(string foo)
@@ -677,13 +967,13 @@ namespace MonoTests.Portable.Xaml
 	{
 		public XData Markup { get; set; }
 	}
-	
+
 	// FIXME: test it with XamlXmlReader (needs to create xml first)
 	public class EventContainer
 	{
-		#pragma warning disable 67
+#pragma warning disable 67
 		public event Action Run;
-		#pragma warning restore 67
+#pragma warning restore 67
 	}
 
 	public class NamedItem
@@ -721,6 +1011,15 @@ namespace MonoTests.Portable.Xaml
 		public string ItemName { get; set; }
 
 		public IList<NamedItem2> References { get; private set; }
+	}
+
+	public class NamedItem3 : NamedItem2
+	{
+		public NamedItem2 Other { get; set; }
+
+#if !PCL136
+		public ImmutableArray<NamedItem3> ImmutableReferences { get; set; }
+#endif
 	}
 
 	[TypeConverter(typeof(TestValueConverter))]
@@ -879,7 +1178,7 @@ namespace MonoTests.Portable.Xaml
 			AttachablePropertyServices.SetProperty(target, ProtectedIdentifier, value);
 		}
 
-		static Dictionary<object,List<EventHandler>> handlers = new Dictionary<object,List<EventHandler>>();
+		static Dictionary<object, List<EventHandler>> handlers = new Dictionary<object, List<EventHandler>>();
 
 		public static void AddXHandler(object target, EventHandler handler)
 		{
@@ -904,7 +1203,7 @@ namespace MonoTests.Portable.Xaml
 		{
 		}
 
-		Dictionary<AttachableMemberIdentifier,object> props = new Dictionary<AttachableMemberIdentifier,object>();
+		Dictionary<AttachableMemberIdentifier, object> props = new Dictionary<AttachableMemberIdentifier, object>();
 
 		public int PropertyCount
 		{
@@ -989,6 +1288,34 @@ namespace MonoTests.Portable.Xaml
 		}
 	}
 
+	public class Attached4
+	{
+		internal List<TestClass4> Property { get; set;  } = new List<TestClass4>();
+	}
+
+	public class AttachedWrapper4
+	{
+		public static List<TestClass4> GetSomeCollection(Attached4 attached)
+		{
+			return attached.Property;
+		}
+	}
+	public class AttachedWrapper5
+	{
+		public static List<TestClass4> GetSomeCollection(Attached4 attached)
+		{
+			return attached.Property;
+		}
+		public static void SetSomeCollection(Attached4 attached, List<TestClass4> value)
+		{
+			attached.Property = value;
+		}
+	}
+
+	public class CustomEventArgs : EventArgs
+	{
+	}
+
 	public class EventStore
 	{
 		public bool Method1Invoked;
@@ -996,14 +1323,17 @@ namespace MonoTests.Portable.Xaml
 		public event EventHandler<EventArgs> Event1;
 		public event Func<object> Event2;
 
+		public event EventHandler<CustomEventArgs> Event3;
+
 		public object Examine()
 		{
 			if (Event1 != null)
 				Event1(this, EventArgs.Empty);
 			if (Event2 != null)
 				return Event2();
-			else
-				return null;
+			if (Event3 != null)
+				Event3(this, new CustomEventArgs());
+			return null;
 		}
 
 		public void Method1()
@@ -1032,7 +1362,7 @@ namespace MonoTests.Portable.Xaml
 		public object Examine()
 		{
 			if (Event1 != null)
-				Event1(this, default (TEventArgs));
+				Event1(this, default(TEventArgs));
 			if (Event2 != null)
 				return Event2();
 			else
@@ -1183,11 +1513,11 @@ namespace MonoTests.Portable.Xaml
 
 	public class DirectDictionaryContainer // for such xml that directly contains items in <*.Items> element.
 	{
-		public IDictionary<EnumValueType,int> Items { get; set; }
+		public IDictionary<EnumValueType, int> Items { get; set; }
 
 		public DirectDictionaryContainer()
 		{
-			this.Items = new Dictionary<EnumValueType,int>();
+			this.Items = new Dictionary<EnumValueType, int>();
 		}
 	}
 
@@ -1230,11 +1560,14 @@ namespace MonoTests.Portable.Xaml
 			var text = item as string;
 			if (text != null)
 				Add(new CollectionItem { Name = text });
-			var other = item as OtherItem;
-			if (other != null)
-				Add(other.CollectionItem);
 			else
-				Add((CollectionItem)item);
+			{
+				var other = item as OtherItem;
+				if (other != null)
+					Add(other.CollectionItem);
+				else
+					Add((CollectionItem)item);
+			}
 			return Count - 1;
 		}
 	}
@@ -1295,8 +1628,23 @@ namespace MonoTests.Portable.Xaml
 		{
 			throw new NotImplementedException();
 		}
-	}
+	}	
+	
+	public class TestDeferredLoader<T> : XamlDeferringLoader
+	{
+		public override object Load(XamlReader xamlReader, IServiceProvider serviceProvider)
+		{
+			var list = new XamlNodeList(xamlReader.SchemaContext);
+			XamlServices.Transform(xamlReader, list.Writer);
 
+			return new Func<T>(() => (T)XamlServices.Load(list.GetReader()));
+		}
+
+		public override XamlReader Save(object value, IServiceProvider serviceProvider)
+		{
+			throw new NotImplementedException();
+		}
+	}
 
 	public class DeferredLoadingChild
 	{
@@ -1319,13 +1667,23 @@ namespace MonoTests.Portable.Xaml
 	{
 		[XamlDeferLoad(typeof(TestDeferredLoader), typeof(DeferredLoadingChild))]
 		public DeferredLoadingChild Child { get; set; }
+	}	
+	
+	[ContentProperty("Child")]
+	public class DeferredLoadingContainerMember2
+	{
+		[XamlDeferLoad(typeof(TestDeferredLoader<TestClass4>), typeof(TestClass4))]
+		public Func<TestClass4> Child { get; set; }
 	}
 
+	[ContentProperty("Item")]
 	[XamlDeferLoad(typeof(TestDeferredLoader2), typeof(DeferredLoadingChild2))]
 	public class DeferredLoadingChild2
 	{
 		public XamlNodeList List { get; set; }
 		public string Foo { get; set; }
+
+		public CollectionParentGenericList Item { get; set; }
 
 		public DeferredLoadingChild2()
 		{
@@ -1483,7 +1841,7 @@ namespace MonoTests.Portable.Xaml
 		}
 	}
 
-	#if !PCL136
+#if !PCL136
 
 	public class ImmutableCollectionContainer
 	{
@@ -1512,6 +1870,54 @@ namespace MonoTests.Portable.Xaml
 		public int IntValue { get; set; }
 
 		public long LongValue { get; set; }
+	}
+
+	public class TestObjectWithShouldSerialize
+	{
+		public string Text { get; set; }
+
+		internal int ShouldSerializeCalled { get; set; }
+
+		bool ShouldSerializeText()
+		{
+			ShouldSerializeCalled++;
+			return !string.IsNullOrEmpty(Text) && Text != "bar";
+		}
+	}
+
+	[ContentProperty("Child")]
+	public class Whitespace
+	{
+		public string TabConvertedToSpaces { get; set; }
+		public string NewlineConvertedToSpaces { get; set; }
+		public string ConsecutiveSpaces { get; set; }
+		public string SpacesAroundTags { get; set; }
+		public string Preserve { get; set; }
+		public WhitespaceChild Child { get; set; }
+	}
+
+	[ContentProperty("Content")]
+	public class WhitespaceChild
+	{
+		public string Content { get; set; }
+	}
+
+	public class CommandContainer
+	{
+		public ICommand Command1 { get; set; }
+		public ICommand Command2 { get; set; }
+	}
+
+	[ContentProperty("Items")]
+	public class DictionaryContainer
+	{
+		public Dictionary<object, DictionaryItem> Items { get; } = new Dictionary<object, DictionaryItem>();
+	}
+
+	[DictionaryKeyProperty("Key")]
+	public class DictionaryItem
+	{
+		public object Key { get; set; }
 	}
 }
 

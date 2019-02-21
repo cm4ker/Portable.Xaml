@@ -1,4 +1,4 @@
-//
+﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -23,10 +23,12 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.ComponentModel.Design.Serialization;
 using System.Reflection;
 using NUnit.Framework;
 using MonoTests.Portable.Xaml;
+#if NETSTANDARD
+using System.ComponentModel;
+#endif
 #if PCL
 using Portable.Xaml.Markup;
 using Portable.Xaml.ComponentModel;
@@ -43,6 +45,7 @@ using Category = NUnit.Framework.CategoryAttribute;
 
 namespace MonoTests.Portable.Xaml.Markup
 {
+#if HAS_TYPE_CONVERTER
 	[TestFixture]
 	public class TypeExtensionConverterTest
 	{
@@ -53,7 +56,7 @@ namespace MonoTests.Portable.Xaml.Markup
 				throw new NotImplementedException ();
 			}
 		}
-		
+
 		class TypeDescriptorContext : ITypeDescriptorContext
 		{
 			public object Service { get; set; }
@@ -74,10 +77,10 @@ namespace MonoTests.Portable.Xaml.Markup
 			
 			public object Instance { get; set; }
 
-			#if !PCL
+#if HAS_TYPE_CONVERTER
 			public IContainer Container { get; set; }
 			public PropertyDescriptor PropertyDescriptor { get; set; }
-			#endif
+#endif
 		}
 		
 		[Test]
@@ -140,4 +143,5 @@ namespace MonoTests.Portable.Xaml.Markup
 			Assert.Throws<NotSupportedException> (() => tc.ConvertTo (new DummyValueSerializerContext (), null, "x:Int32", typeof (TypeExtension)));
 		}
 	}
+	#endif
 }

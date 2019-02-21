@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using NUnit.Framework;
+using System.IO;
 #if PCL
 using Portable.Xaml.Markup;
 using Portable.Xaml;
@@ -43,12 +44,12 @@ namespace MonoTests.Portable.Xaml
 	{
 		XamlSchemaContext NewStandardContext ()
 		{
-			return new XamlSchemaContext (new Assembly [] {typeof (XamlSchemaContext).Assembly });
+			return new XamlSchemaContext (new Assembly [] {typeof (XamlSchemaContext).GetTypeInfo().Assembly });
 		}
 
 		XamlSchemaContext NewThisAssemblyContext ()
 		{
-			return new XamlSchemaContext (new Assembly [] {GetType ().Assembly });
+			return new XamlSchemaContext (new Assembly [] {GetType ().GetTypeInfo().Assembly });
 		}
 
 		[Test]
@@ -77,7 +78,7 @@ namespace MonoTests.Portable.Xaml
 		[Test]
 		public void Constructor ()
 		{
-			var ctx = new XamlSchemaContext (new Assembly [] {typeof (XamlSchemaContext).Assembly });
+			var ctx = new XamlSchemaContext (new Assembly [] {typeof (XamlSchemaContext).GetTypeInfo().Assembly });
 			Assert.AreEqual (1, ctx.ReferenceAssemblies.Count, "#1");
 		}
 
@@ -165,7 +166,7 @@ namespace MonoTests.Portable.Xaml
         [Test]
 		public void GetXamlTypeAndAllXamlTypes ()
 		{
-			var ctx = new XamlSchemaContext (new Assembly [] {typeof (string).Assembly}); // build with corlib.
+			var ctx = new XamlSchemaContext (new Assembly [] {typeof (string).GetTypeInfo().Assembly }); // build with corlib.
 			Assert.AreEqual (0, ctx.GetAllXamlTypes (XamlLanguage.Xaml2006Namespace).Count (), "#0"); // premise
 
 			var xt = ctx.GetXamlType (typeof (string));
@@ -266,11 +267,22 @@ namespace MonoTests.Portable.Xaml
 			Assert.AreEqual (typeof (TypeExtension), xt.UnderlyingType, "#2-2");
 		}
 
-		[Test]
-		public void GetTypeFromXamlTypeNameWithClrName ()
+		[TestCase(typeof(bool))]
+		[TestCase(typeof(byte))]
+		[TestCase(typeof(char))]
+		[TestCase(typeof(DateTime))]
+		[TestCase(typeof(decimal))]
+		[TestCase(typeof(double))]
+		[TestCase(typeof(Int16))]
+		[TestCase(typeof(Int32))]
+		[TestCase(typeof(Int64))]
+		[TestCase(typeof(float))]
+		[TestCase(typeof(string))]
+		[TestCase(typeof(TimeSpan))]
+		public void GetTypeFromXamlTypeNameWithClrName (Type type)
 		{
 			// ensure that this does *not* resolve clr type name.
-			var xn = new XamlTypeName ("clr-namespace:System;assembly=mscorlib", "DateTime");
+			var xn = new XamlTypeName ("clr-namespace:System;assembly=mscorlib", type.Name);
 			var ctx = NewStandardContext ();
 			var xt = ctx.GetXamlType (xn);
 			Assert.IsNull (xt, "#1");
@@ -306,6 +318,52 @@ namespace MonoTests.Portable.Xaml
 			var xt = ctx.GetXamlType(tn);
 			Assert.IsNotNull(xt, "#1");
 			Assert.IsNotNull(xt.UnderlyingType, "#2");
+		}
+
+		[Test]
+		public void AttachableMemberTypeShouldBeCorrectWhenReadOnly()
+		{
+			var ctx = new XamlSchemaContext();
+			var xt = ctx.GetXamlType(typeof(AttachedWrapper4));
+			Assert.IsNotNull(xt, "#1");
+			var xm = xt.GetAttachableMember("SomeCollection");
+			Assert.IsNotNull(xm, "#2");
+			Assert.AreEqual(typeof(List<TestClass4>), xm.Type.UnderlyingType, "#3");
+		}
+		[Test]
+		public void AttachableMemberTypeShouldBeCorrect()
+		{
+			var ctx = new XamlSchemaContext();
+			var xt = ctx.GetXamlType(typeof(AttachedWrapper5));
+			Assert.IsNotNull(xt, "#1");
+			var xm = xt.GetAttachableMember("SomeCollection");
+			Assert.IsNotNull(xm, "#2");
+			Assert.AreEqual(typeof(List<TestClass4>), xm.Type.UnderlyingType, "#3");
+		}
+
+		[Test]
+		public void PassesNullToGetXamlType_typeArguments_ForNoArguments()
+		{
+			var xml = File.ReadAllText(Compat.GetTestFile("Int32.xml")).UpdateXml();
+			var ctx = new TestGetXamlTypeArgumentsNull();
+			var reader = new XamlXmlReader(new StringReader(xml), ctx);
+			var writer = new XamlObjectWriter(ctx);
+
+			XamlServices.Transform(reader, writer);
+
+			Assert.True(ctx.Invoked);
+		}
+
+		private class TestGetXamlTypeArgumentsNull : XamlSchemaContext
+		{
+			public bool Invoked { get; set; }
+
+			protected override XamlType GetXamlType(string xamlNamespace, string name, params XamlType[] typeArguments)
+			{
+				Assert.IsNull(typeArguments);
+				Invoked = true;
+				return base.GetXamlType(xamlNamespace, name, typeArguments);
+			}
 		}
 	}
 }

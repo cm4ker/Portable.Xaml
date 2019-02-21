@@ -23,10 +23,12 @@
 //
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using Portable.Xaml.Markup;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
 
 namespace Portable.Xaml.Schema
@@ -42,12 +44,12 @@ namespace Portable.Xaml.Schema
 		
 		public XamlTypeInvoker (XamlType type)
 		{
-			if (type == null)
+			if (ReferenceEquals(type, null))
 				throw new ArgumentNullException ("type");
 			Type = type;
 		}
 		
-		Dictionary<object, object> cache;
+		ConcurrentDictionary<object, object> cache;
 
 		static object s_CreateImmutableFromMutableKey = new object();
 		static object s_MutableTypeKey = new object();
@@ -56,7 +58,8 @@ namespace Portable.Xaml.Schema
 			where T: class
 		{
 			if (cache == null)
-				cache = new Dictionary<object, object>();
+				cache = new ConcurrentDictionary<object, object>();
+
 			object obj;
 			if (!cache.TryGetValue(key, out obj))
 			{
@@ -72,7 +75,7 @@ namespace Portable.Xaml.Schema
 
 		void ThrowIfUnknown ()
 		{
-			if (Type == null || Type.UnderlyingType == null)
+			if (ReferenceEquals(Type, null) || Type.UnderlyingType == null)
 				throw new NotSupportedException (string.Format ("Current operation is valid only when the underlying type on a XamlType is known, but it is unknown for '{0}'", Type));
 		}
 
@@ -102,21 +105,16 @@ namespace Portable.Xaml.Schema
 					return;
 				}
 
-				MethodInfo mi = LookupAddCollectionMethod(Type, collectionType, itemType);
-				if (mi == null)
-					throw new InvalidOperationException($"The collection type '{collectionType}' does not have 'Add' method");
+				addDelegate = CreateAddDelegate(instance, item, collectionType, itemType, key, mode);
 
-				if (mode.HasFlag(XamlInvokerOptions.DeferCompile))
+				try
 				{
-					addDelegate = (i, v) => mi.Invoke(i, new object[] { v });
-					Task.Factory.StartNew(() => cache[key] = addDelegate = mi.BuildCallExpression());
+					addDelegate(instance, item);
 				}
-				else
+				catch (TargetInvocationException e)
 				{
-					addDelegate = mi.BuildCallExpression();
+					ExceptionDispatchInfo.Capture(e.InnerException).Throw();
 				}
-				cache[key] = addDelegate;
-				addDelegate(instance, item);
 			}
 			else
 			{
@@ -136,6 +134,26 @@ namespace Portable.Xaml.Schema
 			}
 		}
 
+		Action<object, object> CreateAddDelegate(object instance, object item, Type collectionType, Type itemType, Tuple<Type, Type> key, XamlInvokerOptions mode)
+		{
+			// this is separate as the anonymous types are instantiated at the beginning of the method
+			Action<object, object> addDelegate;
+			MethodInfo mi = LookupAddCollectionMethod(Type, collectionType, itemType);
+			if (mi == null)
+				throw new InvalidOperationException($"The collection type '{collectionType}' does not have 'Add' method");
+
+			if (mode.HasFlag(XamlInvokerOptions.DeferCompile))
+			{
+				cache[key] = addDelegate = (i, v) => mi.Invoke(i, new object[] { v });
+				Task.Factory.StartNew(() => cache[key] = addDelegate = mi.BuildCallExpression());
+			}
+			else
+			{
+				cache[key] = addDelegate = mi.BuildCallExpression();
+			}
+			return addDelegate;
+		}
+
 		MethodInfo LookupAddCollectionMethod(XamlType type, Type collectionType, Type itemType)
 		{
 			// FIXME: this method lookup should be mostly based on GetAddMethod(). At least iface method lookup must be done there.
@@ -145,17 +163,22 @@ namespace Portable.Xaml.Schema
 				var xct = type.SchemaContext.GetXamlType(collectionType);
 				if (!xct.IsCollection) // not sure why this check is done only when UnderlyingType exists...
 					throw new NotSupportedException(String.Format("Non-collection type '{0}' does not support this operation", xct));
-				if (collectionType.GetTypeInfo().IsAssignableFrom(type.UnderlyingType.GetTypeInfo()))
+				if (typeof(IList).GetTypeInfo().IsAssignableFrom(collectionType.GetTypeInfo()))
+					mi = typeof(IList).GetTypeInfo().GetDeclaredMethod("Add");
+				else if (collectionType.GetTypeInfo().IsAssignableFrom(type.UnderlyingType.GetTypeInfo()))
 					mi = GetAddMethod(type.SchemaContext.GetXamlType(itemType));
 			}
 
 			if (mi == null)
 			{
-				if (collectionType.GetTypeInfo().IsGenericType)
+				var baseCollection = collectionType.GetTypeInfo().GetInterfaces()
+												   .FirstOrDefault(r => r.GetTypeInfo().IsGenericType
+																   && r.GetTypeInfo().GetGenericTypeDefinition() == typeof(ICollection<>));
+				if (baseCollection != null)
 				{
-					mi = collectionType.GetRuntimeMethod("Add", collectionType.GetTypeInfo().GetGenericArguments());
+					mi = collectionType.GetRuntimeMethod("Add", baseCollection.GetTypeInfo().GetGenericArguments());
 					if (mi == null)
-						mi = LookupAddMethod(collectionType, typeof(ICollection<>).MakeGenericType(collectionType.GetTypeInfo().GetGenericArguments()));
+						mi = LookupAddMethod(collectionType, baseCollection);
 				}
 				else
 				{
@@ -193,14 +216,13 @@ namespace Portable.Xaml.Schema
 					throw new InvalidOperationException($"The dictionary type '{instanceType}' does not have 'Add' method");
 				if (mode.HasFlag(XamlInvokerOptions.DeferCompile))
 				{
-					addDelegate = (i, k, v) => mi.Invoke(i, new object[] { k, v });
+					cache[key] = addDelegate = (i, k, v) => mi.Invoke(i, new object[] { k, v });
 					Task.Factory.StartNew(() => cache[key] = addDelegate = mi.BuildCall2Expression());
 				}
 				else
 				{
-					addDelegate = mi.BuildCall2Expression();
+					cache[key] = addDelegate = mi.BuildCall2Expression();
 				}
-				cache[lookupKey] = addDelegate;
 				addDelegate(instance, key, item);
 			}
 			else
@@ -317,6 +339,11 @@ namespace Portable.Xaml.Schema
 		{
 			if (instance == null)
 				throw new ArgumentNullException (nameof(instance));
+
+			// cannot get enumerator of immutable collections
+			if (Type?.IsMutableDefault(instance) == true)
+				return Enumerable.Empty<object>().GetEnumerator();
+
 			return ((IEnumerable) instance).GetEnumerator ();
 		}
 	}

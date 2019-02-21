@@ -29,6 +29,9 @@ using System.Reflection;
 using System.Xml;
 using NUnit.Framework;
 using MonoTests.Portable.Xaml;
+using System.Globalization;
+using System.ComponentModel;
+using CategoryAttribute = NUnit.Framework.CategoryAttribute;
 #if PCL
 using Portable.Xaml.Markup;
 using Portable.Xaml.ComponentModel;
@@ -36,13 +39,10 @@ using Portable.Xaml;
 using Portable.Xaml.Schema;
 #else
 using System.Windows.Markup;
-using System.ComponentModel;
 using System.Xaml;
 using System.Xaml.Schema;
 #endif
 
-using CategoryAttribute = NUnit.Framework.CategoryAttribute;
-using System.Globalization;
 
 namespace MonoTests.Portable.Xaml
 {

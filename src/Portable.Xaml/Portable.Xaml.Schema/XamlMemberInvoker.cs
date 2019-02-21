@@ -1,4 +1,4 @@
-//
+﻿//
 // Copyright (C) 2010 Novell Inc. http://novell.com
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -54,7 +54,7 @@ namespace Portable.Xaml.Schema
 
 		public XamlMemberInvoker(XamlMember member)
 		{
-			if (member == null)
+			if (ReferenceEquals(member, null))
 				throw new ArgumentNullException("member");
 			Member = member;
 		}
@@ -70,12 +70,20 @@ namespace Portable.Xaml.Schema
 				return getDelegate(instance);
 			}
 
-			if (Member == null)
+			if (ReferenceEquals(Member, null))
 				throw new NotSupportedException("Current operation is invalid for unknown member.");
 
 			if (Member.IsDirective)
 				throw new NotSupportedException($"not supported operation on directive member {Member}");
 
+			CreateGetDelegate();
+
+			return getDelegate(instance);
+		}
+
+		void CreateGetDelegate()
+		{
+			// this is in a separate method since this makes the GetValue() method allocate an internal anonymous class
 			var getter = UnderlyingGetter;
 			if (getter == null)
 				throw new NotSupportedException($"Attempt to get value from write-only property or event {Member}");
@@ -83,21 +91,34 @@ namespace Portable.Xaml.Schema
 			var mode = Member.SchemaContext.InvokerOptions;
 			if (mode.HasFlag(XamlInvokerOptions.DeferCompile))
 			{
-				getDelegate = i => getter.Invoke(i, null);
-				Task.Factory.StartNew(() => getDelegate = getter.BuildGetExpression());
+				getDelegate = GetGetMethod();
+				Task.Factory.StartNew(BuildGetExpression);
 			}
 			else if (mode.HasFlag(XamlInvokerOptions.Compile))
 			{
+				//Console.WriteLine($"Building getter for {getter}");
 				getDelegate = getter.BuildGetExpression();
 			}
 			else
 			{
-				getDelegate = i => getter.Invoke(i, null);
+				getDelegate = GetGetMethod();
 			}
-
-
-			return getDelegate(instance);
 		}
+
+		Func<object,object> GetGetMethod()
+		{
+			if (Member.IsAttachable)
+				return GetValueReflectionAttachable;
+			else
+				return GetValueReflection;
+		}
+		
+
+		object GetValueReflection(object instance) => UnderlyingGetter.Invoke(instance, null);
+
+		object GetValueReflectionAttachable(object instance) => UnderlyingGetter.Invoke(null, new[] {instance});
+
+		void BuildGetExpression() => getDelegate = UnderlyingGetter.BuildGetExpression();
 
 		public virtual void SetValue(object instance, object value)
 		{
@@ -111,12 +132,19 @@ namespace Portable.Xaml.Schema
 				return;
 			}
 
-			if (Member == null)
+			if (ReferenceEquals(Member, null))
 				throw new NotSupportedException("Current operation is invalid for unknown member.");
 
 			if (Member.IsDirective)
 				throw new NotSupportedException($"not supported operation on directive member {Member}");
 
+			CreateSetDelegate();
+
+			setDelegate(instance, value);
+		}
+
+		void CreateSetDelegate()
+		{
 			var setter = UnderlyingSetter;
 			if (setter == null)
 				throw new NotSupportedException($"Attempt to set value from read-only property {Member}");
@@ -125,7 +153,7 @@ namespace Portable.Xaml.Schema
 			if (mode.HasFlag(XamlInvokerOptions.DeferCompile))
 			{
 				CreateSetDelegate(setter);
-				Task.Factory.StartNew(() => setDelegate = setter.BuildCallExpression());
+				Task.Factory.StartNew(BuildSetterExpression);
 			}
 			else if (mode.HasFlag(XamlInvokerOptions.Compile))
 			{
@@ -135,21 +163,54 @@ namespace Portable.Xaml.Schema
 			{
 				CreateSetDelegate(setter);
 			}
-
-			setDelegate(instance, value);
 		}
+
+		void BuildSetterExpression() => setDelegate = UnderlyingSetter.BuildCallExpression();
 
 		void CreateSetDelegate(MethodInfo setter)
 		{
 			if (Member.IsAttachable)
-				setDelegate = (i, v) => setter.Invoke(null, new object[] { i, v });
+				setDelegate = SetDelegateReflectionAttachable;
 			else
-				setDelegate = (i, v) => setter.Invoke(i, new object[] { v });
+				setDelegate = SetDelegateReflection;
+		}
+
+		void SetDelegateReflectionAttachable(object instance, object value)
+		{
+			UnderlyingSetter.Invoke(null, new object[] { instance, value });
+		}
+
+		void SetDelegateReflection(object instance, object value)
+		{
+			UnderlyingSetter.Invoke(instance, new object[] { value });
 		}
 
 		public virtual ShouldSerializeResult ShouldSerializeValue(object instance)
 		{
 			throw new NotImplementedException();
+		}
+
+		/// <summary>
+		/// Gets a value indicating that the instance is considered the default value of the member.
+		/// </summary>
+		/// <remarks>
+		/// This uses the DefaultValueAttribute normally, but for immutable structs this is also useful to  define that 
+		/// the value is default.
+		/// 
+		/// E.g. for immutable collections, this uses the IsDefault property to determine if it should be written to xaml.
+		/// </remarks>
+		/// <returns><c>true</c>, if the instance is the default value, <c>false</c> otherwise.</returns>
+		/// <param name="instance">instance of the object to test if it is default.</param>
+		[EnhancedXaml]
+		public virtual bool IsDefaultValue(object instance)
+		{
+			if (Member == null)
+				return false;
+			if (Member.DefaultValue != null)
+				return Equals(Member.DefaultValue.Value, instance);
+			if (Member.Type?.IsMutableDefault(instance) == true)
+				return true;
+			return false;
 		}
 	}
 }

@@ -94,9 +94,10 @@ namespace Portable.Xaml
 				Save (xw, instance);
 		}
 
+		static XamlSchemaContextSettings s_settings = new XamlSchemaContextSettings { InvokerOptions = XamlInvokerOptions.None };
 		public static void Save (XmlWriter xmlWriter, object instance)
 		{
-			Save (new XamlXmlWriter (xmlWriter, new XamlSchemaContext ()), instance);
+			Save (new XamlXmlWriter (xmlWriter, new XamlSchemaContext(s_settings)), instance);
 		}
 
 		public static void Save (XamlWriter xamlWriter, object instance)
@@ -122,7 +123,15 @@ namespace Portable.Xaml
 			if (xamlReader.NodeType == XamlNodeType.None)
 				xamlReader.Read ();
 
+			var xamlLineInfo = xamlReader as IXamlLineInfo;
+			var xamlLineConsumer = xamlWriter as IXamlLineInfoConsumer;
+			var shouldSetLineInfo = xamlLineInfo != null && xamlLineConsumer != null && xamlLineConsumer.ShouldProvideLineInfo && xamlLineInfo.HasLineInfo;
+
 			while (!xamlReader.IsEof) {
+				if (shouldSetLineInfo)
+				{
+					xamlLineConsumer.SetLineInfo(xamlLineInfo.LineNumber, xamlLineInfo.LinePosition);
+				}
 				xamlWriter.WriteNode (xamlReader);
 				xamlReader.Read ();
 			}

@@ -24,10 +24,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml;
 using Portable.Xaml.Schema;
 
 using Pair = System.Collections.Generic.KeyValuePair<Portable.Xaml.XamlMember,string>;
+using StringPair = System.Collections.Generic.KeyValuePair<string, string>;
 
 namespace Portable.Xaml
 {
@@ -95,35 +98,83 @@ namespace Portable.Xaml
 		{
 		}
 
-		public XamlXmlReader (Stream stream, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
-			: this (XmlReader.Create (stream), schemaContext, settings)
+		public XamlXmlReader(Stream stream, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
 		{
+			Initialize(CreateReader(stream, settings), schemaContext, settings);
 		}
 
-		#if PCL136
-		public XamlXmlReader (string fileName, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+#if PCL136
+		public XamlXmlReader(string fileName, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
 		{
-			throw new NotSupportedException ("Cannot load directly from a file with this profile");
+			throw new NotSupportedException("Cannot load directly from a file with this profile");
 		}
-		#else
-		static readonly XmlReaderSettings file_reader_settings = new XmlReaderSettings () { CloseInput =true };
+#else
+		static readonly XmlReaderSettings file_reader_settings = new XmlReaderSettings { CloseInput = true };
 
-		public XamlXmlReader (string fileName, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
-			: this (XmlReader.Create (fileName, file_reader_settings), schemaContext, settings)
+		public XamlXmlReader(string fileName, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
 		{
-		}
-		#endif
-
-		public XamlXmlReader (TextReader textReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
-			: this (XmlReader.Create (textReader), schemaContext, settings)
-		{
+			Initialize(CreateReader(fileName, settings), schemaContext, settings);
 		}
 
-		public XamlXmlReader (XmlReader xmlReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+		static XmlReader CreateReader(string fileName, XamlXmlReaderSettings settings)
 		{
-			parser = new XamlXmlParser (xmlReader, schemaContext, settings);
+			return CreateReader(XmlReader.Create(fileName, CreateReaderSettings(settings, closeInput: true)), settings);
 		}
-		
+#endif
+
+		public XamlXmlReader(TextReader textReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+		{
+			Initialize(CreateReader(textReader, settings), schemaContext, settings);
+		}
+
+		public XamlXmlReader(XmlReader xmlReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+		{
+			Initialize(CreateReader(xmlReader, settings), schemaContext, settings);
+		}
+
+		void Initialize(XmlReader xmlReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+		{
+			parser = new XamlXmlParser(xmlReader, schemaContext, settings);
+		}
+
+		static XmlReader CreateReader(Stream stream, XamlXmlReaderSettings settings)
+		{
+			if (settings?.RequiresXmlContext != true)
+				return XmlReader.Create(stream, CreateReaderSettings(settings));
+			
+			return XmlReader.Create(stream, CreateReaderSettings(settings, ConformanceLevel.Fragment), settings.CreateXmlContext());
+		}
+
+		static XmlReader CreateReader(TextReader reader, XamlXmlReaderSettings settings)
+		{
+			if (settings?.RequiresXmlContext != true)
+				return XmlReader.Create(reader, CreateReaderSettings(settings));
+			
+			return XmlReader.Create(reader, CreateReaderSettings(settings, ConformanceLevel.Fragment), settings.CreateXmlContext());
+		}
+
+		static XmlReader CreateReader(XmlReader xmlReader, XamlXmlReaderSettings settings)
+		{
+			if (settings?.RequiresXmlContext != true)
+				return XmlReader.Create(xmlReader, CreateReaderSettings(settings));
+
+			// need to read from a TextReader to load a fragment, so we copy the xml of the current reader
+			xmlReader.Read();
+			var reader = new StringReader(xmlReader.ReadOuterXml());
+			return XmlReader.Create(reader, CreateReaderSettings(settings, ConformanceLevel.Fragment), settings.CreateXmlContext());
+		}
+
+		static XmlReaderSettings CreateReaderSettings(XamlXmlReaderSettings settings, ConformanceLevel conformance = ConformanceLevel.Document, bool? closeInput = null)
+		{
+			return new XmlReaderSettings
+			{
+				CloseInput = closeInput ?? settings?.CloseInput ?? false,
+				IgnoreComments = true,
+				IgnoreProcessingInstructions = true,
+				ConformanceLevel = conformance
+			};
+		}
+
 		#endregion
 
 		XamlXmlParser parser;
@@ -206,28 +257,26 @@ namespace Portable.Xaml
 	
 	class XamlXmlParser
 	{
-		public XamlXmlParser (XmlReader xmlReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
+		static XamlXmlReaderSettings default_settings = new XamlXmlReaderSettings();
+		public XamlXmlParser(XmlReader xmlReader, XamlSchemaContext schemaContext, XamlXmlReaderSettings settings)
 		{
 			if (xmlReader == null)
-				throw new ArgumentNullException ("xmlReader");
+				throw new ArgumentNullException(nameof(xmlReader));
 			if (schemaContext == null)
-				throw new ArgumentNullException ("schemaContext");
+				throw new ArgumentNullException(nameof(schemaContext));
 
 			sctx = schemaContext;
-			this.settings = settings ?? new XamlXmlReaderSettings ();
+			this.settings = settings ?? default_settings;
+			if (settings?.SkipXmlCompatibilityProcessing != true)
+			{
+				xmlReader = new CompatibleXmlReader(xmlReader, schemaContext);
+			}
 
-			// filter out some nodes.
-			var xrs = new XmlReaderSettings () {
-				CloseInput = this.settings.CloseInput,
-				IgnoreComments = true,
-				IgnoreProcessingInstructions = true,
-				IgnoreWhitespace = true };
-
-			r = XmlReader.Create (xmlReader, xrs);
+			r = xmlReader;
 			line_info = r as IXmlLineInfo;
-			xaml_namespace_resolver = new NamespaceResolver (r as IXmlNamespaceResolver);
+			xaml_namespace_resolver = new NamespaceResolver(r as IXmlNamespaceResolver);
 		}
-		
+
 		XmlReader r;
 		IXmlLineInfo line_info;
 		XamlSchemaContext sctx;
@@ -245,6 +294,18 @@ namespace Portable.Xaml
 		XamlXmlNodeInfo Node (XamlNodeType nodeType, object nodeValue)
 		{
 			return new XamlXmlNodeInfo(nodeType, nodeValue, line_info);
+		}
+		
+		/// <summary>
+		/// Create new <see cref="XamlXmlNodeInfo"/> Use this overload only then you want pass deferred line info information to instance
+		/// </summary>
+		/// <param name="nodeType">Type of new node</param>
+		/// <param name="nodeValue">Value of new node</param>
+		/// <param name="lineInfo">Line info</param>
+		/// <returns></returns>
+		XamlXmlNodeInfo Node (XamlNodeType nodeType, object nodeValue, IXmlLineInfo lineInfo)
+		{
+			return new XamlXmlNodeInfo(nodeType, nodeValue, lineInfo);
 		}
 
 		public IEnumerable<XamlXmlNodeInfo> Parse ()
@@ -264,22 +325,60 @@ namespace Portable.Xaml
 			return ns;
 		}
 
+		IEnumerable<XamlXmlNodeInfo> ReadElementContent(XamlType parentType, XamlMember currentMember)
+		{
+			while (r.NodeType != XmlNodeType.EndElement)
+			{
+				if (currentMember == XamlLanguage.Items)
+				{
+					foreach (var x in ReadCollectionItems(parentType, currentMember))
+					{
+						if (x.NodeType == XamlNodeType.None)
+							yield break;
+						yield return x;
+					}
+				}
+				else if (r.NodeType == XmlNodeType.Text || r.NodeType == XmlNodeType.CDATA)
+				{
+					if (currentMember.Type.IsCollection || 
+						currentMember.Type.IsDictionary || 
+						currentMember == XamlLanguage.UnknownContent)
+					{
+						yield return Node(XamlNodeType.GetObject, currentMember.Type);
+						foreach (var ni in ReadMembers(parentType, currentMember.Type))
+							yield return ni;
+						yield return Node(XamlNodeType.EndObject, currentMember.Type);
+					}
+					else
+					{
+						yield return Node(XamlNodeType.Value, NormalizeWhitespace(r.Value));
+						r.Read();
+					}
+				}
+				else
+				{
+					foreach (var x in ReadObjectElement(parentType, currentMember))
+					{
+						if (x.NodeType == XamlNodeType.None)
+							yield break;
+						yield return x;
+					}
+				}
+			}
+		}
+
 		// Note that it could return invalid (None) node to tell the caller that it is not really an object element.
 		IEnumerable<XamlXmlNodeInfo> ReadObjectElement (XamlType parentType, XamlMember currentMember)
 		{
+			if (r.NodeType == XmlNodeType.Whitespace)
+				r.MoveToContent();
+
 			if (r.NodeType == XmlNodeType.EndElement)
 				yield break;
 
-			if (r.NodeType == XmlNodeType.Text || r.NodeType == XmlNodeType.CDATA) {
-				//throw new XamlParseException (String.Format ("Element is expected, but got {0}", r.NodeType));
-				yield return Node (XamlNodeType.Value, r.Value);
-				r.Read();
-				yield break;
-			}
-			
 			if (r.NodeType != XmlNodeType.Element)
 			{
-				throw new XamlParseException (String.Format ("Element is expected, but got {0}", r.NodeType));
+				throw new XamlParseException(String.Format("Element is expected, but got {0}", r.NodeType));
 			}
 
 			if (r.MoveToFirstAttribute ()) {
@@ -293,7 +392,7 @@ namespace Portable.Xaml
 			var sti = GetStartTagInfo ();
 
 			var xt = sctx.GetXamlType (sti.TypeName);
-			if (xt == null) {
+			if (ReferenceEquals(xt, null)) {
 				// Current element could be for another member in the parent type (if exists)
 				if (parentType != null && (r.LocalName.IndexOf ('.') > 0 || parentType.GetMember (r.LocalName) != null)) {
 					// stop the iteration and signal the caller to not read current element as an object. (It resolves conflicts between "start object for current collection's item" and "start member for the next member in the parent object".
@@ -302,55 +401,65 @@ namespace Portable.Xaml
 				}
 
 				// creates name-only XamlType. Also, it does not seem that it does not store this XamlType to XamlSchemaContext (Try GetXamlType(xtn) after reading such xaml node, it will return null).
-				xt = new XamlType (sti.Namespace, sti.Name, sti.TypeName.TypeArguments == null ? null : sti.TypeName.TypeArguments.Select<XamlTypeName,XamlType> (xxtn => sctx.GetXamlType (xxtn)).ToArray (), sctx);
-			}
-			
-			bool isGetObject = false;
-			if (currentMember != null && !xt.CanAssignTo (currentMember.Type)) {
-				if (currentMember.DeclaringType != null && currentMember.DeclaringType.ContentProperty == currentMember)
-					isGetObject = true;
-
-				// It could still be GetObject if current_member
-				// is not a directive and current type is not
-				// a markup extension.
-				// (I'm not very sure about the condition;
-				// it could be more complex.)
-				// seealso: bug #682131
-				else if (!(currentMember is XamlDirective) &&
-				    !xt.IsMarkupExtension)
-					isGetObject = true;
+				xt = new XamlType (sti.Namespace, sti.Name, sti.TypeName.TypeArguments?.Select(xxtn => sctx.GetXamlType (xxtn)).ToArray (), sctx);
 			}
 
-			if (isGetObject) {
-				yield return Node (XamlNodeType.GetObject, currentMember.Type);
-				foreach (var ni in ReadMembers (parentType, currentMember.Type))
+			// It could still be GetObject if current_member is not defer-loaded, it
+			// is not a directive, and current type is not
+			// a markup extension.
+			// (I'm not very sure about the condition;
+			// it could be more complex.)
+			// seealso: bug #682131
+			if (!ReferenceEquals(currentMember, null)
+			    && ReferenceEquals(currentMember.DeferringLoader, null)
+				&& !xt.CanAssignTo(currentMember.Type)
+				&& !ReferenceEquals(xt, XamlLanguage.Reference)
+			    && (
+				    currentMember.DeclaringType?.ContentProperty == currentMember
+				    || (!currentMember.IsDirective && !xt.IsMarkupExtension)
+				   )
+			   )
+			{
+				yield return Node(XamlNodeType.GetObject, currentMember.Type);
+				foreach (var ni in ReadMembers(parentType, currentMember.Type))
 					yield return ni;
-				yield return Node (XamlNodeType.EndObject, currentMember.Type);
+				yield return Node(XamlNodeType.EndObject, currentMember.Type);
 				yield break;
 			}
-			// else
+
 
 			yield return Node (XamlNodeType.StartObject, xt);
 
 			// process attribute members (including MarkupExtensions)
 			ProcessAttributesToMember (sti, xt);
 
-			foreach (var pair in sti.Members) {
-				yield return Node (XamlNodeType.StartMember, pair.Key);
+			for (int i = 0; i < sti.Members.Count; i++)
+			{
+				var memberInfo = sti.Members[i];
+				yield return Node(XamlNodeType.StartMember, memberInfo.Member, memberInfo.LineInfo);
 
 				// Try markup extension
 				// FIXME: is this rule correct?
-				var v = pair.Value;
-				if (!String.IsNullOrEmpty (v) && v [0] == '{') {
-					var pai = new ParsedMarkupExtensionInfo(v, xaml_namespace_resolver, sctx);
-					pai.Parse ();
-					foreach (var node in ReadMarkup(pai))
-						yield return node;
+				var v = memberInfo.Value;
+				if (!string.IsNullOrEmpty(v) && v[0] == '{')
+				{
+					if (v.Length >= 2 && v[1] == '}')
+					{
+						// escaped value with {} at the beginning of the string
+						yield return Node(XamlNodeType.Value, v.Substring(2));
+					}
+					else
+					{
+						var pai = new ParsedMarkupExtensionInfo(v, xaml_namespace_resolver, sctx);
+						pai.Parse();
+						foreach (var node in ReadMarkup(pai))
+							yield return node;
+					}
 				}
 				else
-					yield return Node (XamlNodeType.Value, pair.Value);
+					yield return Node(XamlNodeType.Value, v);
 
-				yield return Node (XamlNodeType.EndMember, pair.Key);
+				yield return Node(XamlNodeType.EndMember, memberInfo.Member);
 			}
 
 			// process content members
@@ -413,7 +522,7 @@ namespace Portable.Xaml
 					}
 					continue;
 				default:
-					foreach (var x in ReadMemberText (xt))
+					foreach (var x in ReadMemberText (parentType, xt))
 						yield return x;
 					continue;
 				}
@@ -424,80 +533,80 @@ namespace Portable.Xaml
 		{
 			string name = r.LocalName;
 			string ns = ResolveLocalNamespace(r.NamespaceURI);
-			string typeArgNames = null;
+			string typeArgNames;
 
-			var members = new List<Pair> ();
-			var atts = ProcessAttributes (r, members);
-
-			// check TypeArguments to resolve Type, and remove them from the list. They don't appear as a node.
-			var l = new List<Pair> ();
-			foreach (var p in members) {
-				if (p.Key == XamlLanguage.TypeArguments) {
-					typeArgNames = p.Value;
-					l.Add (p);
-					break;
-				}
-			}
-			foreach (var p in l)
-				members.Remove (p);
+			var members = new List<MemberInfo> ();
+			var atts = ProcessAttributes (r, members, out typeArgNames);
 
 			IList<XamlTypeName> typeArgs = typeArgNames == null ? null : XamlTypeName.ParseList (typeArgNames, xaml_namespace_resolver);
 			var xtn = new XamlTypeName (ns, name, typeArgs);
-			return new StartTagInfo () { Name = name, Namespace = ns, TypeName = xtn, Members = members, Attributes = atts};
+			return new StartTagInfo { Name = name, Namespace = ns, TypeName = xtn, Members = members, Attributes = atts};
 		}
 
 		bool xmlbase_done;
 
 		// returns remaining attributes to be processed
-		Dictionary<string,string> ProcessAttributes (XmlReader r, List<Pair> members)
+		List<AttributeInfo> ProcessAttributes(XmlReader r, List<MemberInfo> members, out string typeArgNames)
 		{
-			var l = members;
-
 			// base (top element)
-			if (!xmlbase_done) {
+			if (!xmlbase_done)
+			{
 				xmlbase_done = true;
-				string xmlbase = r.GetAttribute ("base", XamlLanguage.Xml1998Namespace) ?? r.BaseURI;
+				string xmlbase = r.GetAttribute("base", XamlLanguage.Xml1998Namespace) ?? r.BaseURI;
 				if (xmlbase != null)
-					l.Add (new Pair (XamlLanguage.Base, xmlbase));
+					members.Add(new MemberInfo(XamlLanguage.Base, xmlbase, line_info));
 			}
-
-			var atts = new Dictionary<string,string> ();
-
-			if (r.MoveToFirstAttribute ()) {
-				do {
-					switch (r.NamespaceURI) {
-					case XamlLanguage.Xml1998Namespace:
-						switch (r.LocalName) {
-						case "base":
-							continue; // already processed.
-						case "lang":
-							l.Add (new Pair (XamlLanguage.Lang, r.Value));
+			typeArgNames = null;
+			var atts = new List<AttributeInfo>();
+			var tagNamespace = r.NamespaceURI;
+			if (r.MoveToFirstAttribute())
+			{
+				do
+				{
+					switch (r.NamespaceURI)
+					{
+						case XamlLanguage.Xml1998Namespace:
+							switch (r.LocalName)
+							{
+								case "base":
+									continue; // already processed.
+								case "lang":
+									members.Add(new MemberInfo(XamlLanguage.Lang, r.Value, line_info));
+									continue;
+								case "space":
+									members.Add(new MemberInfo(XamlLanguage.Space, r.Value, line_info));
+									continue;
+							}
+							break;
+						case XamlLanguage.Xmlns2000Namespace:
 							continue;
-						case "space":
-							l.Add (new Pair (XamlLanguage.Space, r.Value));
-							continue;
-						}
-						break;
-					case XamlLanguage.Xmlns2000Namespace:
-						continue;
-					case XamlLanguage.Xaml2006Namespace:
-						XamlDirective d = FindStandardDirective (r.LocalName, AllowedMemberLocations.Attribute);
-						if (d != null) {
-							l.Add (new Pair (d, r.Value));
-							continue;
-						}
-						throw new NotSupportedException (String.Format ("Attribute '{0}' is not supported", r.Name));
-					default:
-						if (r.NamespaceURI == String.Empty) {
-							atts.Add (r.Name, r.Value);
-							continue;
-						}
-						// Should we just ignore unknown attribute in XAML namespace or any other namespaces ?
-						// Probably yes for compatibility with future version.
-						break;
+						case XamlLanguage.Xaml2006Namespace:
+							XamlDirective d = FindStandardDirective(r.LocalName, AllowedMemberLocations.Attribute);
+							if (d != null)
+							{
+								// check TypeArguments to resolve Type, and remove them from the list. They don't appear as a node.
+								if (ReferenceEquals(d, XamlLanguage.TypeArguments))
+								{
+									typeArgNames = r.Value;
+									continue;
+								}
+								members.Add(new MemberInfo(d, r.Value, line_info));
+								continue;
+							}
+							throw new NotSupportedException(String.Format("Attribute '{0}' is not supported", r.Name));
+						default:
+							if (string.IsNullOrEmpty(r.NamespaceURI) || tagNamespace == r.NamespaceURI || r.LocalName.IndexOf('.') > 0)
+							{
+								atts.Add(new AttributeInfo(r.Name, r.Value, line_info));
+								continue;
+							}
+							// Custom directive
+							members.Add(new MemberInfo(SchemaContext.GetXamlDirective(r.NamespaceURI, r.LocalName), r.Value, 
+								line_info));
+							break;
 					}
-				} while (r.MoveToNextAttribute ());
-				r.MoveToElement ();
+				} while (r.MoveToNextAttribute());
+				r.MoveToElement();
 			}
 			return atts;
 		}
@@ -514,7 +623,7 @@ namespace Portable.Xaml
 
 		XamlMember FindAttachableMember(string prefix, string typeName, string memberName)
 		{
-			string apns = prefix.Length > 0 ? r.LookupNamespace (prefix) : ResolveLocalNamespace(r.NamespaceURI);
+			string apns = r.LookupNamespace (prefix);
 			var axtn = new XamlTypeName (apns, typeName, null);
 			var at = sctx.GetXamlType (axtn);
 			return at?.GetAttachableMember (memberName);
@@ -522,20 +631,26 @@ namespace Portable.Xaml
 
 		void ProcessAttributesToMember (StartTagInfo sti, XamlType xt)
 		{
-			foreach (var p in sti.Attributes) {
-				int idx = p.Key.IndexOf (':');
-				string prefix = idx > 0 ? p.Key.Substring (0, idx) : String.Empty;
-				string name = idx > 0 ? p.Key.Substring (idx + 1) : p.Key;
+			sti.Members.Capacity = Math.Max(sti.Members.Capacity, sti.Members.Count + sti.Attributes.Count);
+			for (int i = 0; i < sti.Attributes.Count; i++)
+			{
+				var p = sti.Attributes[i];
+				int idx = p.Name.IndexOf(':');
+				string prefix = idx > 0 ? p.Name.Substring(0, idx) : String.Empty;
+				string name = idx > 0 ? p.Name.Substring(idx + 1) : p.Name;
 
-				var am = FindAttachableMember (prefix, name);
-				if (am != null) {
-					sti.Members.Add (new Pair (am, p.Value));
+				var am = FindAttachableMember(prefix, name);
+				if (am != null)
+				{
+					sti.Members.Add(new MemberInfo(am, p.Value, p.LineInfo));
 					continue;
 				}
-				var xm = xt.GetMember (name);
+				var xm = xt.GetMember(name);
 				if (xm != null)
-					sti.Members.Add (new Pair (xm, p.Value));
-				// ignore unknown attribute
+					sti.Members.Add(new MemberInfo(xm, p.Value, p.LineInfo));
+				else
+					// unknown attributes go through!
+					sti.Members.Add(new MemberInfo(new XamlMember(name, xt, false), p.Value, p.LineInfo));
 			}
 		}
 
@@ -554,20 +669,65 @@ namespace Portable.Xaml
 			return XamlLanguage.AllDirectives.FirstOrDefault (dd => (dd.AllowedLocation & loc) != 0 && dd.Name == name);
 		}
 
-		IEnumerable<XamlXmlNodeInfo> ReadMemberText (XamlType xt)
+		string NormalizeWhitespace(
+			string value,
+			bool normalizeStart = true,
+			bool normalizeEnd = true,
+			bool whitespaceSignificant = false)
 		{
-			// this value is for Initialization, or Content property value
-			XamlMember xm;
-			if (xt.ContentProperty != null)
-				xm = xt.ContentProperty;
-			else
-				xm = XamlLanguage.Initialization;
-			yield return Node (XamlNodeType.StartMember, xm);
-			yield return Node (XamlNodeType.Value, r.Value);
-			r.Read ();
-			yield return Node (XamlNodeType.EndMember, xm);
+			var sb = new StringBuilder(value.Length);
+			bool lastWasWhitesp = false;
+			for (var index = 0; index < value.Length; index++)
+			{
+				var c = value[index];
+				if (c == ' ' || c == '\n' || c == '\t' || c == '\r')
+				{
+					if (lastWasWhitesp || (sb.Length == 0 && normalizeStart))
+						continue;
+					lastWasWhitesp = true;
+					sb.Append(' ');
+					continue;
+				}
+				else
+				{
+					lastWasWhitesp = false;
+				}
+
+				sb.Append(c);
+			}
+
+			if (lastWasWhitesp && normalizeEnd)
+				sb.Length--;
+
+			return sb.ToString();
 		}
-		
+
+		IEnumerable<XamlXmlNodeInfo> ReadMemberText (XamlType parentType, XamlType xt)
+		{
+			if (!xt.IsCollection)
+			{
+				if (xt.ContentProperty == null)
+				{
+					yield return Node(XamlNodeType.StartMember, XamlLanguage.Initialization);
+					yield return Node(XamlNodeType.Value, NormalizeWhitespace(r.Value));
+					r.Read();
+					yield return Node(XamlNodeType.EndMember, XamlLanguage.Initialization);
+				}
+				else
+				{
+					foreach (var x in ReadMember(xt, xt.ContentProperty))
+						yield return x;
+				}
+			}
+			else
+			{
+				yield return Node(XamlNodeType.StartMember, XamlLanguage.Items);
+				foreach (var x in ReadCollectionItems(xt, XamlLanguage.Items))
+					yield return x;
+				yield return Node(XamlNodeType.EndMember, XamlLanguage.Items);
+			}
+		}
+
 		// member element, implicit member, children via content property, or value
 		IEnumerable<XamlXmlNodeInfo> ReadMemberElement (XamlType parentType, XamlType xt)
 		{
@@ -607,8 +767,19 @@ namespace Portable.Xaml
 					yield break;
 				}
 
-				// ok, then create unknown member.
-				xm = new XamlMember (name, xt, false); // FIXME: not sure if isAttachable is always false.
+				if (idx >= 0)
+				{
+					// Unknown property.
+					xm = new XamlMember(name, xt, false); // FIXME: not sure if isAttachable is always false.
+				}
+				else
+				{
+					// Unknown content member.
+					xm = XamlLanguage.UnknownContent;
+					foreach (var ni in ReadMember(xt, xm))
+						yield return ni;
+					yield break;
+				}
 			}
 
 			if (!r.IsEmptyElement) {
@@ -636,41 +807,96 @@ namespace Portable.Xaml
 				else if (xm.Type.IsCollection || xm.Type.IsDictionary) {
 					yield return Node (XamlNodeType.GetObject, xm.Type);
 					yield return Node (XamlNodeType.StartMember, XamlLanguage.Items);
-					foreach (var ni in ReadCollectionItems (parentType, XamlLanguage.Items))
+					foreach (var ni in ReadCollectionItems (xm.Type, XamlLanguage.Items))
+					{
+						if (ni.NodeType == XamlNodeType.None)
+							break;
 						yield return ni;
+					}
 					yield return Node (XamlNodeType.EndMember, XamlLanguage.Items);
 					yield return Node (XamlNodeType.EndObject, xm.Type);
 				}
 				else
 					throw new XamlParseException (String.Format ("Read-only member '{0}' showed up in the source XML, and the xml contains element content that cannot be read.", xm.Name)) { LineNumber = this.LineNumber, LinePosition = this.LinePosition };
 			} else {
-				if (xm.Type.IsCollection || xm.Type.IsDictionary) {
-					foreach (var ni in ReadCollectionItems (parentType, xm))
-						yield return ni;
+				foreach (var ni in ReadElementContent(parentType, xm))
+				{
+					if (ni.NodeType == XamlNodeType.None)
+						throw new Exception("should not happen");
+					yield return ni;
 				}
-				else
-					foreach (var ni in ReadObjectElement (parentType, xm)) {
-						if (ni.NodeType == XamlNodeType.None)
-							throw new Exception ("should not happen");
-						yield return ni;
-					}
 			}
 
 			yield return Node (XamlNodeType.EndMember, xm);
 		}
 
-		IEnumerable<XamlXmlNodeInfo> ReadCollectionItems (XamlType parentType, XamlMember xm)
+		IEnumerable<XamlXmlNodeInfo> ReadCollectionItems(XamlType parentType, XamlMember xm)
 		{
-			for (r.MoveToContent (); r.NodeType != XmlNodeType.EndElement; r.MoveToContent ()) {
+			bool GetNextElementTrim()
+			{
+				if (r.NodeType == XmlNodeType.Element)
+				{
+					var sti = GetStartTagInfo();
+					var xt = sctx.GetXamlType(sti.TypeName);
+					return xt.TrimSurroundingWhitespace;
+				}
 
-				foreach (var ni in ReadObjectElement (parentType, xm)) {
-					if (ni.NodeType == XamlNodeType.None)
-						yield break;
-					yield return ni;
+				return true;
+			}
+
+			XamlTypeName previous = null;
+
+			r.MoveToContent();
+
+			while (r.NodeType != XmlNodeType.EndElement)
+			{
+				switch (r.NodeType)
+				{
+					case XmlNodeType.Text:
+						var text = r.Value;
+						r.Read();
+
+						var trimStart = previous == null ||
+							sctx.GetXamlType(previous).TrimSurroundingWhitespace;
+						var trimEnd = r.NodeType == XmlNodeType.EndElement ||
+							GetNextElementTrim();
+
+						yield return Node(XamlNodeType.Value, NormalizeWhitespace(text, trimStart, trimEnd));
+						break;
+
+					case XmlNodeType.Element:
+						if (parentType != null && (r.LocalName.IndexOf('.') > 0 || parentType.GetMember(r.LocalName) != null))
+						{
+							yield return Node(XamlNodeType.None, null);
+							yield break;
+						}
+
+						var sti = GetStartTagInfo();
+						previous = sti.TypeName;
+
+						foreach (var x in ReadObjectElement(parentType, xm))
+						{
+							yield return x;
+						}
+						break;
+
+					case XmlNodeType.Whitespace:
+						r.Read();
+						if (previous != null &&
+							parentType.IsWhitespaceSignificantCollection &&
+							!sctx.GetXamlType(previous).TrimSurroundingWhitespace)
+						{
+							if (r.NodeType != XmlNodeType.EndElement)
+								yield return Node(XamlNodeType.Value, " ");
+						}
+						break;
+
+					default:
+						throw new XamlParseException(String.Format("Text or Element is expected, but got {0}", r.NodeType));
 				}
 			}
 		}
-		
+
 		IEnumerable<XamlXmlNodeInfo> ReadXData ()
 		{
 			var xt = XamlLanguage.XData;
@@ -690,13 +916,111 @@ namespace Portable.Xaml
 			get { return line_info != null && line_info.HasLineInfo () ? line_info.LinePosition : 0; }
 		}
 
-		internal class StartTagInfo
+		internal struct LineInfo : IXmlLineInfo
+		{
+			public LineInfo(IXmlLineInfo xamlLineInfo)
+			{
+				if (xamlLineInfo != null)
+				{
+					LineNumber = xamlLineInfo.LineNumber;
+					LinePosition = xamlLineInfo.LinePosition;
+					LinePosition = xamlLineInfo.LinePosition;
+				}
+				else
+				{
+					LineNumber = 0;
+					LinePosition = 0;
+				}
+			}
+
+			public bool HasLineInfo() => true;
+			public int LineNumber { get; }
+			public int LinePosition { get; }
+		}
+		
+		/// <summary>
+		/// Information about member in xaml document
+		/// </summary>
+		internal struct MemberInfo
+		{
+			private MemberInfo(XamlMember member, string name)
+			{
+				Member = member;
+				Value = name;
+				LineInfo = new LineInfo();
+			}
+
+			public MemberInfo(XamlMember member, string value, LineInfo lineInfo) : this(member, value)
+			{
+				LineInfo = lineInfo;
+			}
+			
+			public MemberInfo(XamlMember member, string value, IXmlLineInfo lineInfo) : this(member, value)
+			{
+				LineInfo = new LineInfo(lineInfo);
+			}
+
+			/// <summary>
+			/// Xaml member connected with this information
+			/// </summary>
+			public XamlMember Member;
+			
+			/// <summary>
+			/// Value of the member
+			/// </summary>
+			public string Value;
+			
+			/// <summary>
+			/// Provided line information
+			/// </summary>
+			public LineInfo LineInfo;
+		}
+		
+		/// <summary>
+		/// Information about attribute in xaml document
+		/// </summary>
+		internal struct AttributeInfo
+		{
+			private AttributeInfo(string name, string value)
+			{
+				Name = name;
+				Value = value;
+				LineInfo = new LineInfo();
+			}
+
+			public AttributeInfo(string name, string value, LineInfo lineInfo) : this(name, value)
+			{
+				LineInfo = lineInfo;
+			}
+			
+			public AttributeInfo(string name, string value, IXmlLineInfo lineInfo) : this(name, value)
+			{
+				LineInfo = new LineInfo(lineInfo);
+			}
+
+			/// <summary>
+			/// Name of the attribute
+			/// </summary>
+			public string Name;
+			
+			/// <summary>
+			/// Value of the attribute
+			/// </summary>
+			public string Value;
+			
+			/// <summary>
+			/// Provided line information
+			/// </summary>
+			public LineInfo LineInfo;
+		}
+
+		internal struct StartTagInfo
 		{
 			public string Name;
 			public string Namespace;
 			public XamlTypeName TypeName;
-			public List<Pair> Members;
-			public Dictionary<string,string> Attributes;
+			public List<MemberInfo> Members;
+			public List<AttributeInfo> Attributes;
 		}
 		
 		internal class NamespaceResolver : IXamlNamespaceResolver

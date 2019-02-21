@@ -31,7 +31,6 @@ using Portable.Xaml.Markup;
 using Portable.Xaml.ComponentModel;
 using Portable.Xaml;
 using Portable.Xaml.Schema;
-using UriTypeConverter = Portable.Xaml.ComponentModel.UriTypeConverter;
 #else
 using System.Windows.Markup;
 using System.ComponentModel;
@@ -40,6 +39,9 @@ using System.Xaml.Schema;
 #endif
 
 using CategoryAttribute = NUnit.Framework.CategoryAttribute;
+#if NETSTANDARD
+using System.ComponentModel;
+#endif
 
 namespace MonoTests.Portable.Xaml
 {
@@ -342,8 +344,10 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (t.TypeConverter, "#25");
 			Assert.IsTrue (t.TypeConverter.ConverterInstance is Int32Converter, "#25-2");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -380,7 +384,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (t.TypeConverter, "#25"); // TypeTypeConverter
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -417,7 +423,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -454,7 +462,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			//Assert.IsNull (t.DeferringLoader, "#28");
@@ -484,7 +494,7 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsNameValid, "#2"); // see #4
 			Assert.IsFalse (t.IsUnknown, "#3");
 			Assert.AreEqual ("XamlTypeTest+TestClass3", t.Name, "#4");
-			Assert.AreEqual ("clr-namespace:MonoTests.Portable.Xaml;assembly=" + GetType ().Assembly.GetName ().Name, t.PreferredXamlNamespace, "#5");
+			Assert.AreEqual ("clr-namespace:MonoTests.Portable.Xaml;assembly=" + GetType ().GetTypeInfo().Assembly.GetName ().Name, t.PreferredXamlNamespace, "#5");
 			Assert.IsNull (t.TypeArguments, "#6");
 			Assert.AreEqual (typeof (TestClass3), t.UnderlyingType, "#7");
 			Assert.IsTrue (t.ConstructionRequiresArguments, "#8");
@@ -504,7 +514,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsTrue (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNotNull (t.ContentProperty, "#27");
 			Assert.AreEqual ("Name", t.ContentProperty.Name, "#27-2");
@@ -521,7 +533,7 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsTrue (t.IsNameValid, "#2");
 			Assert.IsFalse (t.IsUnknown, "#3");
 			Assert.AreEqual ("ArgumentAttributed", t.Name, "#4");
-			Assert.AreEqual ("clr-namespace:MonoTests.Portable.Xaml;assembly=" + GetType ().Assembly.GetName ().Name, t.PreferredXamlNamespace, "#5");
+			Assert.AreEqual ("clr-namespace:MonoTests.Portable.Xaml;assembly=" + GetType ().GetTypeInfo().Assembly.GetName ().Name, t.PreferredXamlNamespace, "#5");
 			Assert.IsNull (t.TypeArguments, "#6");
 			Assert.AreEqual (typeof (ArgumentAttributed), t.UnderlyingType, "#7");
 			Assert.IsTrue (t.ConstructionRequiresArguments, "#8");
@@ -541,7 +553,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (t.IsAmbient, "#22");
 			Assert.IsNull (t.AllowedContentTypes, "#23");
 			Assert.IsNull (t.ContentWrappers, "#24");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNull (t.TypeConverter, "#25");
+#endif
 			Assert.IsNull (t.ValueSerializer, "#26");
 			Assert.IsNull (t.ContentProperty, "#27");
 			// Assert.IsNull (t.DeferringLoader, "#28");
@@ -555,17 +569,21 @@ namespace MonoTests.Portable.Xaml
 				Assert.IsTrue (Array.IndexOf (names, member.Name) >= 0, "#32");
 		}
 
+#if HAS_TYPE_CONVERTER
 		[Test]
 		public void TypeConverter ()
 		{
 			Assert.IsNull (new XamlType (typeof (List<object>), sctx).TypeConverter, "#1");
+			Assert.IsNull (new XamlType (typeof (Dictionary<object, object>), sctx).TypeConverter, "#1");
 			Assert.IsNotNull (new XamlType (typeof (object), sctx).TypeConverter, "#2");
-			Assert.IsTrue (new XamlType (typeof (Uri), sctx).TypeConverter.ConverterInstance is UriTypeConverter, "#3");
+#if !WINDOWS_UWP
+			Assert.IsTrue (new XamlType (typeof (Uri), sctx).TypeConverter.ConverterInstance.GetType().Name == "UriTypeConverter", "#3");
+#endif
 			Assert.IsTrue (new XamlType (typeof (TimeSpan), sctx).TypeConverter.ConverterInstance is TimeSpanConverter, "#4");
 			Assert.IsNull (new XamlType (typeof (XamlType), sctx).TypeConverter, "#5");
 			Assert.IsTrue (new XamlType (typeof (char), sctx).TypeConverter.ConverterInstance is CharConverter, "#6");
 		}
-		
+				
 		[Test]
 		public void TypeConverter_Type ()
 		{
@@ -598,6 +616,8 @@ namespace MonoTests.Portable.Xaml
 			} catch (NotSupportedException) {
 			}
 		}
+
+#endif
 
 		[Test]
 		public void GetXamlNamespaces ()
@@ -842,7 +862,9 @@ namespace MonoTests.Portable.Xaml
 			Assert.IsFalse (xt.IsNullable, "#2");
 			Assert.IsFalse (xt.IsUnknown, "#3");
 			Assert.IsFalse (xt.IsUsableDuringInitialization, "#4");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (xt.TypeConverter, "#5");
+#endif
 		}
 
 		[Test]
@@ -878,8 +900,10 @@ namespace MonoTests.Portable.Xaml
 			Assert.AreEqual ("clr-namespace:System;assembly=mscorlib", xm.Type.PreferredXamlNamespace, "#5");
 			Assert.AreEqual (1, xm.Type.TypeArguments.Count, "#6");
 			Assert.AreEqual (XamlLanguage.Int32, xm.Type.TypeArguments [0], "#7");
+#if HAS_TYPE_CONVERTER
 			Assert.IsNotNull (xm.Type.TypeConverter, "#8");
 			Assert.IsNotNull (xm.Type.TypeConverter.ConverterInstance, "#9");
+#endif
 
 			var obj = new NullableContainer ();
 			xm.Invoker.SetValue (obj, 5);
@@ -895,6 +919,41 @@ namespace MonoTests.Portable.Xaml
 			xt = sctx.GetXamlType (typeof (IDictionary<EnumValueType,int>));
 			Assert.IsTrue (xt.IsDictionary, "#3");
 			Assert.IsFalse (xt.IsCollection, "#4");
+		}
+
+		[Test]
+		public void NullableTypeShouldUseProperValueSerializer()
+		{
+			var val = DateTime.Today;
+			var xt = sctx.GetXamlType(typeof(DateTime?));
+			Assert.IsTrue(xt.IsNullable, "#1");
+			Assert.AreEqual(xt.BaseType, sctx.GetXamlType(typeof(ValueType)), "#2");
+			Assert.IsNull(xt.ValueSerializer, "#3");
+#if HAS_TYPE_CONVERTER
+			Assert.IsNotInstanceOf<System.ComponentModel.DateTimeConverter>(xt.TypeConverter.ConverterInstance, "#4");
+#if PCL
+			Assert.IsInstanceOf(typeof(global::Portable.Xaml.XamlSchemaContext).Assembly.GetType("Portable.Xaml.ComponentModel.PortableXamlDateTimeConverter"), xt.TypeConverter.ConverterInstance, "#4");
+#endif
+#endif
+		}
+
+		[Test]
+		public void BaseClassPropertiesShouldHaveProperNamespaces()
+		{
+			var xtnamebase = sctx.GetXamlType(typeof(TestClass5WithName));
+			var xtderived = sctx.GetXamlType(typeof(NamespaceTest2.TestClassWithDifferentBaseNamespace));
+			Assert.IsNotNull(xtderived);
+			var xmname = xtderived.GetMember("TheName");
+			Assert.IsNotNull(xmname);
+			Assert.AreSame(xtnamebase, xmname.TargetType);
+			Assert.AreSame(xtnamebase, xmname.DeclaringType);
+			// note that the preferred namespace of the name member does not reflect the type we got the 
+			// member from, but the type it is declared on.
+			Assert.AreEqual(xtnamebase.PreferredXamlNamespace, xmname.PreferredXamlNamespace);
+
+			Assert.AreSame(xmname, xtderived.GetAliasedProperty(XamlLanguage.Name));
+			// not important: Assert.AreNotSame(xmname, xtnamebase.GetAliasedProperty(XamlLanguage.Name));
+			Assert.AreEqual(xmname, xtnamebase.GetAliasedProperty(XamlLanguage.Name));
 		}
 	}
 

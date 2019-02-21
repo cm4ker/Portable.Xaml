@@ -1,30 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" DefaultTargets="Package" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="15.0" DefaultTargets="Package" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 	<PropertyGroup>
 		<Configuration Condition="$(Configuration) == ''">Release</Configuration>
 		<Platform Condition="$(Platform) == ''">Any CPU</Platform>
         <BaseDir Condition="$(BaseDir) == ''">..</BaseDir>
         <SourceDir Condition="$(SourceDir) == ''">$(BaseDir)\src</SourceDir>
-        <NugetDir Condition="$(NugetDir) == ''">$(SourceDir)\.nuget</NugetDir>
-        <Nuget>$(NugetDir)\nuget.exe</Nuget>
-        <ArtifactsDir>$(BaseDir)/artifacts</ArtifactsDir>
-        <OutputNupkgDir Condition="$(OutputNupkgDir) == ''">$(ArtifactsDir)/nupkg/$(Configuration)</OutputNupkgDir>
+        <ArtifactsDir>$(BaseDir)\artifacts</ArtifactsDir>
+        <ToolsDir>$(ArtifactsDir)\tools</ToolsDir>
+        <Nuget>$(ToolsDir)\nuget.exe</Nuget>
+        <OutputNupkgDir Condition="$(OutputNupkgDir) == ''">$(ArtifactsDir)\nupkg\$(Configuration)</OutputNupkgDir>
         <Runtime Condition="$(OS) == 'Unix'">mono</Runtime>
-        <UtilitiesBasePath>$(ArtifactsDir)\obj</UtilitiesBasePath>
 	</PropertyGroup>
 	<Import Project="Utilities.targets" />
 
-	<Target Name="Build">
-
+	<Target Name="Build" DependsOnTargets="UpdateVersion;DownloadNuget">
     	<Exec Command="$(Runtime) $(Nuget) restore $(SourceDir)\Portable.Xaml.sln"/>
     	<MSBuild Projects="$(SourceDir)\Portable.Xaml.sln" Targets="$(PackageTargets)" Properties="Configuration=$(Configuration);Platform=$(Platform)"/>
-
 	</Target>
 	
+	<Target Name="DownloadNuget" Condition="!Exists('$(Nuget)')">
+	    <DownloadFile Address="https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" FileName="$(Nuget)" />
+	</Target>
 	
-    <Target Name="Package" DependsOnTargets="Build;BuildUtilities">
+    <Target Name="Package" DependsOnTargets="Build;DownloadNuget">
 
-		<GetAssemblyInfo AssemblyFileName="$(ArtifactsDir)\pcl259\$(Configuration)\Portable.Xaml.dll">
+		<GetAssemblyInfo AssemblyFileName="$(ArtifactsDir)\core\$(Configuration)\netstandard1.3\Portable.Xaml.dll">
 			<Output TaskParameter="AssemblyInformationalVersion" PropertyName="AssemblyVersion" />
 		</GetAssemblyInfo>
 
@@ -34,10 +34,9 @@
 
 	<Target Name="Clean">
 		<RemoveDir Directories="$(ArtifactsDir)"/>
-		<RemoveDir Directories="$(SourceDir)\packages"/>
 	</Target>
 	
-	<Target Name="_GetVersion" DependsOnTargets="BuildUtilities">
+	<Target Name="_GetVersion">
 		<FileExtract File="$(SourceDir)\Portable.Xaml\Assembly\AssemblyInfo.cs"
 			Pattern='(?&lt;=AssemblyInformationalVersion(\\s*)[(]&quot;).*(?=&quot;[)])'
 			Condition="$(BuildVersion) == ''">
@@ -45,11 +44,12 @@
 		</FileExtract>
 	</Target>
 	
-	<Target Name="UpdateVersion" DependsOnTargets="BuildUtilities;_GetVersion">
+	<Target Name="UpdateVersion" Condition="$(BuildVersion) != ''" DependsOnTargets="_GetVersion">
 
 		<Message Text="Set Version: $(BuildVersion)" Condition="$(BuildVersion) != ''" />
 
 		<PropertyGroup>
+			<SetAppveyorVersion Condition="$(SetAppveyorVersion) == ''">True</SetAppveyorVersion>
 			<BuildIncrement Condition="$(BuildVersion) == '' and $(BuildIncrement) == ''">0.1.0.0</BuildIncrement>
 			<BuildVersion Condition="$(BuildVersion) == ''">$(CurrentVersion)</BuildVersion>
 		</PropertyGroup>
@@ -65,16 +65,22 @@
 		<Message Text="New Version: $(AssemblyVersion)" />
 		<Message Text="New Informational Version: $(AssemblyInformationalVersion)" />
 		
+		<FileUpdate Files="$(BaseDir)\appveyor.yml"
+            Pattern='(?&lt;=version\\s*:\\s*)([\\w\\d\\.-]+?)(?=\\.{build})'
+            Replacement='$(AssemblyInformationalVersion)'
+            Condition="$(SetAppveyorVersion) == 'True'" />
+
 		<FileUpdate Files="$(SourceDir)\Portable.Xaml\Assembly\AssemblyInfo.cs"
             Pattern='AssemblyVersion(\\s*)[(]&quot;.*&quot;[)]'
-            Replacement='AssemblyVersion$1(&quot;$(AssemblyVersion)&quot;)' />
+            Replacement='AssemblyVersion$1("$(AssemblyVersion)")' />
 
 		<FileUpdate Files="$(SourceDir)\Portable.Xaml\Assembly\AssemblyInfo.cs"
             Pattern='AssemblyInformationalVersion(\\s*)[(]&quot;.*&quot;[)]'
             Replacement='AssemblyInformationalVersion$1(&quot;$(AssemblyInformationalVersion)&quot;)' />
+            
 	</Target>
 	
-	<Target Name="MakeRelease" DependsOnTargets="Clean;BuildUtilities;_GetVersion">
+	<Target Name="MakeRelease" DependsOnTargets="Clean;_GetVersion">
 		<Exec Command='git diff --quiet HEAD' IgnoreExitCode="true">
 			<Output TaskParameter="ExitCode" PropertyName="HasChanges" />
 		</Exec>
@@ -87,7 +93,7 @@
 		
 	    <MSBuild Projects="$(MSBuildProjectFile)" Targets="UpdateVersion" Properties="BuildVersion=$(AssemblyInformationalVersion)" />
 		<PropertyGroup>
-			<Branch>release\$(AssemblyInformationalVersion)</Branch>
+			<Branch>release/$(AssemblyInformationalVersion)</Branch>
 			<NewVersion>$(AssemblyInformationalVersion)</NewVersion>
 			<NewDevelopVersion>$(AssemblyInformationalVersion)-alpha</NewDevelopVersion>
 		</PropertyGroup>

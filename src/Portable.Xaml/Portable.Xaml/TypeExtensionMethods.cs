@@ -29,6 +29,7 @@ using System.Linq;
 using System.Reflection;
 using Portable.Xaml.Markup;
 using Portable.Xaml.Schema;
+using System.ComponentModel;
 
 namespace Portable.Xaml
 {
@@ -36,10 +37,17 @@ namespace Portable.Xaml
 	{
 		#region inheritance search and custom attribute provision
 
-		public static T GetCustomAttribute<T> (this ICustomAttributeProvider type, bool inherit) where T : Attribute
+		public static T GetCustomAttribute<T> (this ICustomAttributeProvider provider, bool inherit) where T : Attribute
 		{
-			foreach (var a in type.GetCustomAttributes (typeof(T), inherit))
+			foreach (var a in provider.GetCustomAttributes (typeof(T), inherit))
 				return (T)(object)a;
+			return null;
+		}
+
+		public static Attribute GetCustomAttribute(this ICustomAttributeProvider provider, Type type, bool inherit)
+		{
+			foreach (var a in provider.GetCustomAttributes(type, inherit))
+				return (Attribute)(object)a;
 			return null;
 		}
 
@@ -112,16 +120,111 @@ namespace Portable.Xaml
 			// FIXME: does this make sense?
 			var vc = xm?.TypeConverter ?? xt.TypeConverter;
 			var tc = vc?.ConverterInstance;
-			if (tc != null && tc.CanConvertTo (vsctx, typeof(string)))
-				return (string)tc.ConvertTo (vsctx, CultureInfo.InvariantCulture, obj, typeof(string));
+			if (tc != null && tc.CanConvertTo ((ITypeDescriptorContext) vsctx, typeof(string)))
+				return (string)tc.ConvertTo ((ITypeDescriptorContext)vsctx, CultureInfo.InvariantCulture, obj, typeof(string));
 			if (obj is string || obj == null)
 				return (string)obj;
 			throw new InvalidCastException (String.Format ("Cannot cast object '{0}' to string", obj.GetType ()));
 		}
 
-		public static TypeConverter GetTypeConverter (this Type type)
+#if !HAS_TYPE_CONVERTER
+		static Type s_typeConverterAttribute = ReflectionHelpers.GetComponentModelType("System.ComponentModel.TypeConverterAttribute");
+		static PropertyInfo s_typeConverterTypeNameProperty = s_typeConverterAttribute?.GetRuntimeProperty("ConverterTypeName");
+#endif
+
+		public static string GetTypeConverterName(this ICustomAttributeProvider member, bool inherit)
 		{
-			return TypeDescriptor.GetConverter (type);
+			if (member == null)
+				return null;
+			var typeConverterName = member.GetCustomAttribute<TypeConverterAttribute>(inherit)?.ConverterTypeName;
+#if !HAS_TYPE_CONVERTER
+			if (typeConverterName == null && s_typeConverterAttribute != null)
+			{
+				var systemTypeConverterInfo = member.GetCustomAttribute(s_typeConverterAttribute, inherit);
+				if (systemTypeConverterInfo != null)
+				{
+					typeConverterName = s_typeConverterTypeNameProperty.GetValue(systemTypeConverterInfo) as string;
+				}
+			}
+#endif
+			return typeConverterName;
+		}
+
+		public static string GetTypeConverterName(this MemberInfo member, bool inherit)
+		{
+			if (member == null)
+				return null;
+			var typeConverterName = member.GetCustomAttribute<TypeConverterAttribute>(inherit)?.ConverterTypeName;
+#if !HAS_TYPE_CONVERTER
+			if (typeConverterName == null && s_typeConverterAttribute != null)
+			{
+				var systemTypeConverterInfo = member.GetCustomAttribute(s_typeConverterAttribute);
+				if (systemTypeConverterInfo != null)
+				{
+					typeConverterName = s_typeConverterTypeNameProperty.GetValue(systemTypeConverterInfo) as string;
+				}
+			}
+#endif
+			return typeConverterName;
+		}
+
+		public static string GetTypeConverterName(this TypeInfo type, bool inherit)
+		{
+			if (type == null)
+				return null;
+			var typeConverterName = type.GetCustomAttribute<TypeConverterAttribute>(inherit)?.ConverterTypeName;
+#if !HAS_TYPE_CONVERTER
+			if (typeConverterName == null && s_typeConverterAttribute != null)
+			{
+				var systemTypeConverterInfo = type.GetCustomAttribute(s_typeConverterAttribute);
+				if (systemTypeConverterInfo != null)
+				{
+					typeConverterName = s_typeConverterTypeNameProperty.GetValue(systemTypeConverterInfo) as string;
+				}
+			}
+#endif
+			return typeConverterName;
+		}
+
+		public static bool IsBaseTypeConverter(this TypeConverter typeConverter)
+		{
+#if HAS_TYPE_CONVERTER
+			var type = typeConverter.GetType();
+			return type == typeof(TypeConverter)
+				|| type == typeof(CollectionConverter)
+				|| type.FullName == "System.ComponentModel.ReferenceConverter";
+#else
+			var sysType = typeConverter as SystemTypeConverter;
+			var type = sysType?.TypeConverter.GetType() ?? typeConverter.GetType();
+			var fullName = type.FullName;
+			return fullName == "System.ComponentModel.TypeConverter"
+				|| fullName == "System.ComponentModel.CollectionConverter"
+				|| fullName == "System.ComponentModel.ReferenceConverter";
+#endif
+		}
+
+		public static TypeConverter GetTypeConverter(this MemberInfo member)
+		{
+			var typeConverterName = GetTypeConverterName(member, true);
+			if (string.IsNullOrEmpty(typeConverterName))
+				return null;
+
+			var tcType = Type.GetType(typeConverterName);
+
+			var tc = Activator.CreateInstance(tcType);
+#if HAS_TYPE_CONVERTER
+			return tc as TypeConverter;
+#else
+			if (tc is TypeConverter typeConverter)
+				return typeConverter;
+
+			return new SystemTypeConverter(tc);
+#endif
+		}
+
+		public static TypeConverter GetTypeConverter(this Type type)
+		{
+			return TypeDescriptor.GetConverter(type);
 		}
 
 		/*
@@ -161,12 +264,12 @@ namespace Portable.Xaml
 
 		public static bool IsContentValue (this XamlMember member, IValueSerializerContext vsctx)
 		{
-			if (member == XamlLanguage.Initialization)
+			if (ReferenceEquals(member, XamlLanguage.Initialization))
 				return true;
-			if (member == XamlLanguage.PositionalParameters || member == XamlLanguage.Arguments)
+			if (ReferenceEquals(member, XamlLanguage.PositionalParameters) || ReferenceEquals(member, XamlLanguage.Arguments))
 				return false; // it's up to the argument (no need to check them though, as IList<object> is not of value)
 			var typeConverter = member.TypeConverter;
-			if (typeConverter != null && typeConverter.ConverterInstance != null && typeConverter.ConverterInstance.CanConvertTo (vsctx, typeof(string)))
+			if (typeConverter != null && typeConverter.ConverterInstance != null && typeConverter.ConverterInstance.CanConvertTo ((ITypeDescriptorContext)vsctx, typeof(string)))
 				return true;
 			return IsContentValue (member.Type, vsctx);
 		}
@@ -174,7 +277,7 @@ namespace Portable.Xaml
 		public static bool IsContentValue (this XamlType type, IValueSerializerContext vsctx)
 		{
 			var typeConverter = type.TypeConverter;
-			if (typeConverter != null && typeConverter.ConverterInstance != null && typeConverter.ConverterInstance.CanConvertTo (vsctx, typeof(string)))
+			if (typeConverter != null && typeConverter.ConverterInstance != null && typeConverter.ConverterInstance.CanConvertTo ((ITypeDescriptorContext)vsctx, typeof(string)))
 				return true;
 			return false;
 		}
@@ -198,7 +301,7 @@ namespace Portable.Xaml
 			// FIXME: find out why only TypeExtension and StaticExtension yield this directive. Seealso XamlObjectReaderTest.Read_CustomMarkupExtension*()
 			return  type == XamlLanguage.Type ||
 			type == XamlLanguage.Static ||
-			(type.ConstructionRequiresArguments && ExaminePositionalParametersApplicable (type, vsctx));
+				(type.ConstructionRequiresArguments && ExaminePositionalParametersApplicable (type, vsctx));
 		}
 
 		static bool ExaminePositionalParametersApplicable (this XamlType type, IValueSerializerContext vsctx)
@@ -378,23 +481,24 @@ namespace Portable.Xaml
 
     internal static IComparer<XamlMember> MemberComparer = new InternalMemberComparer();
 
-    internal static int CompareMembers (XamlMember m1, XamlMember m2)
+		internal static int CompareMembers(XamlMember m1, XamlMember m2)
 		{
-			if (m1 == null)
-				return m2 == null ? 0 : 1;
-			if (m2 == null)
-				return 0;
+			if (ReferenceEquals(m1, null))
+				return ReferenceEquals(m2, null) ? 0 : -1;
+			if (ReferenceEquals(m2, null))
+				return 1;
 
 			// these come before non-content properties
 
 			// 1. PositionalParameters comes first
-			if (m1 == XamlLanguage.PositionalParameters)
-				return m2 == XamlLanguage.PositionalParameters ? 0 : -1;
-			else if (m2 == XamlLanguage.PositionalParameters)
+			if (ReferenceEquals(m1, XamlLanguage.PositionalParameters))
+				return ReferenceEquals(m2, XamlLanguage.PositionalParameters) ? 0 : -1;
+			if (ReferenceEquals(m2, XamlLanguage.PositionalParameters))
 				return 1;
 
 			// 2. constructor arguments
-			if (m1.IsConstructorArgument) {
+			if (m1.IsConstructorArgument)
+			{
 				if (!m2.IsConstructorArgument)
 					return -1;
 			}
@@ -405,35 +509,36 @@ namespace Portable.Xaml
 			// these come AFTER non-content properties
 
 			// 1. initialization
-
-			if (m1 == XamlLanguage.Initialization)
-				return m2 == XamlLanguage.Initialization ? 0 : 1;
-			else if (m2 == XamlLanguage.Initialization)
+			if (ReferenceEquals(m1, XamlLanguage.Initialization))
+				return ReferenceEquals(m2, XamlLanguage.Initialization) ? 0 : 1;
+			if (ReferenceEquals(m2, XamlLanguage.Initialization))
 				return -1;
 
 			// 2. key
-			if (m1 == XamlLanguage.Key)
-				return m2 == XamlLanguage.Key ? 0 : 1;
-			else if (m2 == XamlLanguage.Key)
+			if (ReferenceEquals(m1, XamlLanguage.Key))
+				return ReferenceEquals(m2, XamlLanguage.Key) ? 0 : 1;
+			if (ReferenceEquals(m2, XamlLanguage.Key))
 				return -1;
 
 			// 3. Name
-			if (m1 == XamlLanguage.Name)
-				return m2 == XamlLanguage.Name ? 0 : 1;
-			else if (m2 == XamlLanguage.Name)
+			if (ReferenceEquals(m1, XamlLanguage.Name))
+				return ReferenceEquals(m2, XamlLanguage.Name) ? 0 : 1;
+			if (ReferenceEquals(m2, XamlLanguage.Name))
 				return -1;
 
-			// 4. ContentProperty is always returned last
-			if (m1.DeclaringType != null && m1.DeclaringType.ContentProperty == m1) {
-				if (!(m2.DeclaringType != null && m2.DeclaringType.ContentProperty == m2))
+
+			// 4. Properties that (probably) require a child node should come last so we can
+			// put as many in the start tag as possible.
+			if (m1.RequiresChildNode)
+			{
+				if (!m2.RequiresChildNode)
 					return 1;
 			}
-			else if (m2.DeclaringType != null && m2.DeclaringType.ContentProperty == m2)
+			else if (m2.RequiresChildNode)
 				return -1;
 
-
 			// then, compare names.
-			return String.CompareOrdinal (m1.Name, m2.Name);
+			return String.CompareOrdinal(m1.Name, m2.Name);
 		}
 
 		internal static string GetInternalXmlName (this XamlMember xm)
