@@ -41,7 +41,7 @@ namespace Mono.Xaml
 namespace Portable.Xaml
 #endif
 {
-	abstract class XamlWriterInternalBase : IProvideValueTarget, IRootObjectProvider, IDestinationTypeProvider
+	internal abstract class XamlWriterInternalBase : IProvideValueTarget, IRootObjectProvider, IDestinationTypeProvider
 	{
 		protected XamlWriterInternalBase(XamlSchemaContext schemaContext, XamlWriterStateManager manager)
 			: this(schemaContext, manager, null)

@@ -94,4 +94,5 @@ using System.Security.Permissions;
 [assembly:InternalsVisibleTo("Portable.Xaml_test_netstandard13")]
 [assembly:InternalsVisibleTo("Portable.Xaml_test_netstandard20")]
 [assembly:InternalsVisibleTo("Portable.Xaml_test_core")]
+[assembly:InternalsVisibleTo("Portable.Xaml.Roslyn")]
 #endif

@@ -29,7 +29,7 @@ namespace TestRoslyn
 	{
 		public static void Main(string[] args)
 		{
-			var xaml = 
+			var xaml =
 				@"<ParentObject xmlns='test.example.com' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
 						x:Class='MyClass'
 						StringValue='Woo'
@@ -39,10 +39,10 @@ namespace TestRoslyn
 
 			try
 			{
-				var sc = new XamlSchemaContext(new[] { Assembly.GetExecutingAssembly() });
+				var sc = new XamlSchemaContext(new[] {Assembly.GetExecutingAssembly()});
 
 				var reader = new XamlXmlReader(new StringReader(xaml));
-				var rw = new Portable.Xaml.Roslyn.RoslynWriter(sc);
+				var rw = new Portable.Xaml.Roslyn.RoslynWriter(sc, null);
 				XamlServices.Transform(reader, rw);
 				Console.WriteLine(rw.ToCode());
 			}
@@ -50,7 +50,6 @@ namespace TestRoslyn
 			{
 				Console.WriteLine(ex);
 			}
-
 		}
 	}
 }
