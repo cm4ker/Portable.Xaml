@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -7,7 +7,7 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>TestRoslyn</RootNamespace>
     <AssemblyName>TestRoslyn</AssemblyName>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -77,17 +77,17 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Portable.Xaml.RoslynWriter\Portable.Xaml.Roslyn.csproj">
-      <Project>{65569529-AECB-4163-A0A9-290A93AD25F3}</Project>
-      <Name>Portable.Xaml.Roslyn</Name>
-    </ProjectReference>
-    <ProjectReference Include="..\Portable.Xaml\Portable.Xaml-pcl259.csproj">
-      <Project>{179484EC-DB00-451A-AD2D-2E2AB20DE519}</Project>
-      <Name>Portable.Xaml-pcl259</Name>
-    </ProjectReference>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
+    <ProjectReference Include="..\Portable.Xaml.Roslyn\Portable.Xaml.Roslyn.csproj">
+      <Project>{65569529-aecb-4163-a0a9-290a93ad25f3}</Project>
+      <Name>Portable.Xaml.Roslyn</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\Portable.Xaml\Portable.Xaml-netstandard2.0.csproj">
+      <Project>{b21ed206-4455-45e4-ae25-7ee7e4d6bd34}</Project>
+      <Name>Portable.Xaml-netstandard2.0</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>
